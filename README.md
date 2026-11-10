@@ -27,7 +27,7 @@ Each day is one plaintext file, `YYYY-MM-DD.txt`:
 13:00-13:15 standard
 ```
 
-`HH:MM-HH:MM <kind> <title>`, on a 15-minute grid. `24:00` is allowed as an end time. Lines starting with `#` are comments. You can edit the files by hand. Lines the app can't read (for example, off-grid times or overlaps) are kept at the end of the file under `# unparsed lines kept by time-block-planner`; they are never deleted. If you remove every block from a day, that day's file is deleted.
+`HH:MM-HH:MM <kind> <title>`, on a 15-minute grid. `24:00` is allowed as an end time. Lines starting with `#` are comments; they are kept, moved to the top of the file when the app saves that day. You can edit the files by hand. Lines the app can't read (for example, off-grid times or overlaps) are kept at the end of the file under `# unparsed lines kept by time-block-planner`; they are never deleted. If you remove every block from a day, that day's file is deleted.
 
 `config.txt` in the same folder stores the chosen theme (`theme=rose-pine`).
 

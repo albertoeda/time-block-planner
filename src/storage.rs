@@ -14,9 +14,14 @@ const APP_DIR: &str = "time-block-planner";
 /// Parses a day file. Lines that are not valid, non-overlapping blocks are kept in `unparsed`.
 pub fn parse_day(text: &str) -> Day {
     let mut day = Day::default();
+    let text = text.strip_prefix('\u{feff}').unwrap_or(text);
     for raw in text.lines() {
         let line = raw.trim();
-        if line.is_empty() || line.starts_with('#') {
+        if line.is_empty() || line == UNPARSED_HEADER {
+            continue;
+        }
+        if line.starts_with('#') {
+            day.comments.push(line.to_string());
             continue;
         }
         let added = parse_block(line).map(|b| day.add(b));
@@ -41,6 +46,10 @@ fn parse_block(line: &str) -> Option<Block> {
 
 pub fn serialize_day(day: &Day) -> String {
     let mut out = String::new();
+    for c in &day.comments {
+        out.push_str(c);
+        out.push('\n');
+    }
     for b in day.blocks() {
         out.push_str(&format!("{}-{} {}", b.start.label(), b.end.label(), b.kind.as_str()));
         if !b.title.is_empty() {
@@ -166,6 +175,21 @@ mod tests {
             vec!["09:10-09:40 standard off-grid", "09:30-09:45 standard overlap", "garbage"]
         );
         assert_eq!(parse_day(&serialize_day(&d)), d);
+    }
+
+    #[test]
+    fn bom_is_ignored() {
+        let d = parse_day("\u{feff}09:00-09:15 deep x\n");
+        assert_eq!(d.blocks().len(), 1);
+        assert!(d.unparsed.is_empty());
+    }
+
+    #[test]
+    fn comments_survive_roundtrip() {
+        let txt = "# week 46\n09:00-09:15 standard x\n";
+        let d = parse_day(txt);
+        assert_eq!(d.blocks().len(), 1);
+        assert_eq!(serialize_day(&d), txt);
     }
 
     #[test]

@@ -66,6 +66,8 @@ pub struct AppState {
     pub status: String,
     history: Vec<(NaiveDate, Day)>,
     future: Vec<(NaiveDate, Day)>,
+    /// The current date's file could not be read; never write it, or we'd destroy it.
+    load_failed: bool,
 }
 
 impl AppState {
@@ -82,6 +84,7 @@ impl AppState {
             status: String::new(),
             history: Vec::new(),
             future: Vec::new(),
+            load_failed: false,
         };
         s.load_current();
         s
@@ -99,6 +102,10 @@ impl AppState {
     }
 
     pub fn save(&mut self) {
+        if self.load_failed {
+            self.status = format!("not saving: {} could not be read", self.date);
+            return;
+        }
         if let Err(e) = self.store.save_day(self.date, &self.day) {
             self.status = format!("save failed: {e}");
         }
@@ -319,38 +326,45 @@ impl AppState {
     }
 
     fn time_travel(&mut self, undo: bool) {
-        let (from, to) = if undo { (&mut self.history, &mut self.future) } else { (&mut self.future, &mut self.history) };
-        let Some((date, day)) = from.pop() else {
+        let popped = if undo { self.history.pop() } else { self.future.pop() };
+        let Some((date, day)) = popped else {
             self.status = if undo { "nothing to undo" } else { "nothing to redo" }.into();
             return;
         };
-        to.push((self.date, self.day.clone()));
+        // Switch to the snapshot's day first so the opposite stack records that day's state.
+        // Every edit is already saved, so leaving the current day needs no save.
         if date != self.date {
-            self.save();
             self.date = date;
+            self.load_current();
         }
+        let current = (self.date, self.day.clone());
+        if undo { self.future.push(current) } else { self.history.push(current) }
         self.day = day;
         self.save();
     }
 
+    /// Edits are saved as they happen, so changing days never writes the day being left.
     fn go_to(&mut self, date: Option<NaiveDate>) {
         let Some(date) = date else { return };
         if date == self.date {
             return;
         }
-        self.save();
         self.date = date;
         self.load_current();
     }
 
     fn load_current(&mut self) {
-        self.day = match self.store.load_day(self.date) {
-            Ok(day) => day,
+        match self.store.load_day(self.date) {
+            Ok(day) => {
+                self.day = day;
+                self.load_failed = false;
+            }
             Err(e) => {
                 self.status = format!("load failed: {e}");
-                Day::default()
+                self.day = Day::default();
+                self.load_failed = true;
             }
-        };
+        }
     }
 
     fn move_cursor(&mut self, delta: i32) {
@@ -499,6 +513,46 @@ mod tests {
         s.apply(Command::Undo, D);
         assert_eq!(s.date, D);
         assert_eq!(s.day.blocks().len(), 1);
+    }
+
+    #[test]
+    fn redo_across_days() {
+        let (t, mut s) = st_with_block(36, 40);
+        s.apply(Command::Delete, D);
+        s.apply(Command::NextDay, D);
+        s.apply(Command::Undo, D);
+        assert_eq!(s.day.blocks().len(), 1);
+        s.apply(Command::Redo, D);
+        assert_eq!(s.date, D);
+        assert!(s.day.blocks().is_empty());
+        assert!(!t.path().join("2026-11-10.txt").exists());
+    }
+
+    #[test]
+    fn unreadable_day_is_never_overwritten() {
+        let tmp = tempfile::tempdir().unwrap();
+        let file = tmp.path().join("2026-11-10.txt");
+        let bytes = [0xffu8, 0xfe, b'x', b'\n'];
+        std::fs::write(&file, bytes).unwrap();
+        let mut s = AppState::new(Store { dir: tmp.path().to_path_buf() }, D);
+        assert!(s.status.starts_with("load failed"), "{}", s.status);
+        s.cursor = Slot(10);
+        s.apply(Command::NewBlock, D);
+        s.apply(Command::Confirm, D);
+        s.apply(Command::Confirm, D);
+        assert!(s.status.starts_with("not saving"), "{}", s.status);
+        s.apply(Command::NextDay, D);
+        s.apply(Command::PrevDay, D);
+        assert_eq!(std::fs::read(&file).unwrap(), bytes);
+    }
+
+    #[test]
+    fn navigation_does_not_rewrite_files() {
+        let (t, mut s) = st_with_block(36, 40);
+        let file = t.path().join("2026-11-10.txt");
+        std::fs::write(&file, "10:00-11:00 deep edited elsewhere\n").unwrap();
+        s.apply(Command::NextDay, D);
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), "10:00-11:00 deep edited elsewhere\n");
     }
 
     #[test]

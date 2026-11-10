@@ -76,6 +76,8 @@ pub struct Day {
     blocks: Vec<Block>,
     /// Lines from a hand-edited file that could not be parsed; preserved verbatim.
     pub unparsed: Vec<String>,
+    /// `#` comment lines from the file, written back at the top.
+    pub comments: Vec<String>,
 }
 
 impl Day {
@@ -153,7 +155,7 @@ impl Day {
     }
 
     pub fn is_empty(&self) -> bool {
-        self.blocks.is_empty() && self.unparsed.is_empty()
+        self.blocks.is_empty() && self.unparsed.is_empty() && self.comments.is_empty()
     }
 
     fn check(&self, b: &Block, ignore: Option<usize>) -> Result<(), EditError> {
