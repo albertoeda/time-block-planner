@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 use chrono::NaiveDate;
 
 use crate::model::{Block, Day, Kind, Slot};
+use crate::tasks::{Task, TaskList};
 
 const UNPARSED_HEADER: &str = "# unparsed lines kept by time-block-planner";
 const APP_DIR: &str = "time-block-planner";
@@ -70,6 +71,46 @@ pub fn serialize_day(day: &Day) -> String {
 }
 
 /// Data folder: CLI arg > `TBP_DIR` > `<Documents>/time-block-planner` > `<home>/time-block-planner`.
+pub fn parse_tasks(text: &str) -> TaskList {
+    let text = text.strip_prefix('\u{feff}').unwrap_or(text);
+    let mut items = Vec::new();
+    for line in text.lines() {
+        if line.trim().is_empty() {
+            continue;
+        }
+        let indent: usize = line
+            .chars()
+            .take_while(|c| *c == ' ' || *c == '\t')
+            .map(|c| if c == '\t' { 2 } else { 1 })
+            .sum();
+        let rest = line.trim_start_matches([' ', '\t']);
+        let (done, rest) = if let Some(r) = rest.strip_prefix("- [ ] ") {
+            (false, r)
+        } else if let Some(r) = rest
+            .strip_prefix("- [x] ")
+            .or_else(|| rest.strip_prefix("- [X] "))
+        {
+            (true, r)
+        } else {
+            (false, rest)
+        };
+        let depth = (indent / 2).min(u8::MAX as usize) as u8;
+        items.push(Task { title: rest.trim().to_string(), done, depth });
+    }
+    TaskList::from_items(items)
+}
+
+pub fn serialize_tasks(list: &TaskList) -> String {
+    let mut out = String::new();
+    for t in list.items() {
+        out.push_str(&"  ".repeat(t.depth as usize));
+        out.push_str(if t.done { "- [x] " } else { "- [ ] " });
+        out.push_str(&t.title);
+        out.push('\n');
+    }
+    out
+}
+
 pub fn resolve_dir(cli: Option<PathBuf>) -> PathBuf {
     if let Some(p) = cli {
         return p;
@@ -114,6 +155,29 @@ impl Store {
             };
         }
         write_atomic(&self.dir, &path, &serialize_day(day))
+    }
+
+    fn tasks_path(&self) -> PathBuf {
+        self.dir.join("tasks.txt")
+    }
+
+    pub fn load_tasks(&self) -> io::Result<TaskList> {
+        match fs::read_to_string(self.tasks_path()) {
+            Ok(text) => Ok(parse_tasks(&text)),
+            Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(TaskList::default()),
+            Err(e) => Err(e),
+        }
+    }
+
+    pub fn save_tasks(&self, list: &TaskList) -> io::Result<()> {
+        let path = self.tasks_path();
+        if list.is_empty() {
+            return match fs::remove_file(&path) {
+                Err(e) if e.kind() != io::ErrorKind::NotFound => Err(e),
+                _ => Ok(()),
+            };
+        }
+        write_atomic(&self.dir, &path, &serialize_tasks(list))
     }
 
     pub fn load_theme(&self) -> Option<String> {
@@ -237,5 +301,34 @@ mod tests {
     #[test]
     fn resolve_dir_prefers_cli() {
         assert_eq!(resolve_dir(Some("X:/p".into())), PathBuf::from("X:/p"));
+    }
+
+    #[test]
+    fn tasks_roundtrip() {
+        let txt = "- [ ] Write report\n  - [x] Outline\n  - [ ] Draft\n- [ ] Call bank\n";
+        let l = parse_tasks(txt);
+        assert_eq!(l.len(), 4);
+        assert!(l.items()[1].done);
+        assert_eq!(l.items()[2].depth, 1);
+        assert_eq!(serialize_tasks(&l), txt);
+    }
+
+    #[test]
+    fn parse_tasks_tolerates_hand_edits() {
+        let l = parse_tasks("\u{feff}plain line\n\t\t- [X] deep jump\n\n    - [ ]   spaced  \n");
+        let got: Vec<_> = l.items().iter().map(|t| (t.depth, t.done, t.title.as_str())).collect();
+        assert_eq!(got, [(0, false, "plain line"), (1, true, "deep jump"), (2, false, "spaced")]);
+    }
+
+    #[test]
+    fn tasks_file_roundtrip_and_empty_deletes() {
+        let tmp = tempfile::tempdir().unwrap();
+        let store = Store { dir: tmp.path().join("d") };
+        assert!(store.load_tasks().unwrap().is_empty());
+        let l = parse_tasks("- [ ] a\n");
+        store.save_tasks(&l).unwrap();
+        assert_eq!(store.load_tasks().unwrap(), l);
+        store.save_tasks(&TaskList::default()).unwrap();
+        assert!(!store.dir.join("tasks.txt").exists());
     }
 }
