@@ -172,12 +172,11 @@ fn draw(ui: &mut egui::Ui, state: &mut AppState, theme: &Theme, scroll: Scroll) 
         painter.rect_stroke(row_rect(start.0, end.0), 0.0, accent(1.5), StrokeKind::Inside);
     }
 
-    // Task drop target: the hour a dragged task would fill.
+    // Task drop target: exactly the range `drop_task` would fill (nothing if occupied).
     if response.dnd_hover_payload::<TaskDrag>().is_some()
-        && let Some(slot) = pointer_slot
+        && let Some((start, end)) = pointer_slot.and_then(|slot| state.drop_range(slot))
     {
-        let end = (slot.0 + 4).min(SLOTS_PER_DAY);
-        painter.rect_stroke(row_rect(slot.0, end), 0.0, accent(1.5), StrokeKind::Inside);
+        painter.rect_stroke(row_rect(start.0, end.0), 0.0, accent(1.5), StrokeKind::Inside);
     }
 
     // Now line.
@@ -224,7 +223,7 @@ fn draw(ui: &mut egui::Ui, state: &mut AppState, theme: &Theme, scroll: Scroll) 
 fn handle_mouse(ui: &egui::Ui, state: &mut AppState, response: &egui::Response, top: f32, row_h: f32) {
     let today = super::today();
     let finish_edit = |state: &mut AppState| {
-        if matches!(state.mode, Mode::EditTitle { .. }) {
+        if matches!(state.mode, Mode::EditTitle { .. } | Mode::EditTask { .. }) {
             state.apply(Command::Confirm, today);
         }
     };

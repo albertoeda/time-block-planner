@@ -3,7 +3,7 @@
 use chrono::NaiveDate;
 use egui::{Align2, Color32, CornerRadius, Frame, Id, Order, RichText, Shadow, Stroke, vec2};
 
-use crate::state::{AppState, Mode};
+use crate::state::{AppState, Focus, Mode};
 use crate::theme::{Rgb, Theme, themes};
 
 pub fn color(c: Rgb) -> Color32 {
@@ -51,7 +51,8 @@ pub fn header(ui: &mut egui::Ui, state: &AppState, theme: &Theme, today: NaiveDa
         let tag = if state.date == today { " [today] ─" } else { "" };
         let text = format!("┌─ {}{tag}", state.date.format("%a %Y-%m-%d ─"));
         let fill = "─".repeat(200);
-        ui.add(egui::Label::new(RichText::new(format!("{text}{fill}")).color(color(theme.accent))).truncate());
+        let c = if state.focus == Focus::Timeline { theme.accent } else { theme.dim };
+        ui.add(egui::Label::new(RichText::new(format!("{text}{fill}")).color(color(c))).truncate());
     });
 }
 
@@ -61,7 +62,8 @@ pub fn status_bar(ui: &mut egui::Ui, state: &AppState, theme: &Theme) {
             let mode = match state.mode {
                 Mode::Normal => "NORMAL",
                 Mode::Create { .. } => "CREATE",
-                Mode::EditTitle { .. } | Mode::EditTask { .. } => "EDIT",
+                Mode::EditTitle { .. } => "EDIT",
+                Mode::EditTask { .. } => "TASK",
                 Mode::MoveBlock { .. } => "MOVE",
                 Mode::ThemePicker { .. } => "THEME",
                 Mode::Help => "HELP",
@@ -82,26 +84,33 @@ fn mod_key() -> &'static str {
 }
 
 const HELP: &[(&str, &str)] = &[
-    ("↑ ↓", "move 15 min"),
-    ("PgUp PgDn", "move 1 hour"),
-    ("Home End, ^+↑ ^+↓", "start / end of day"),
+    ("Tab", "switch pane: tasks / timeline"),
     ("← →", "previous / next day"),
-    ("^+T", "today"),
-    ("Tab Shift+Tab", "next / previous block"),
-    ("^+N", "new block at cursor"),
-    ("Shift+↑ Shift+↓", "select a range for a new block"),
-    ("Enter, F2", "rename block"),
-    ("1 2 3", "standard / scheduled / deep"),
-    ("Alt+↑ Alt+↓", "move block"),
+    ("t, ^+T", "today"),
+    ("↑ ↓", "move 15 min · select task"),
+    ("PgUp PgDn", "move 1 hour · 10 tasks"),
+    ("Home End", "00:00 / 23:45 · first / last task"),
+    ("^+↑ ^+↓", "previous / next block"),
+    ("n, ^+N", "new block at cursor · new task"),
+    ("N", "new subtask"),
+    ("Enter, F2, e", "rename block or task"),
+    ("d, Delete, Backspace", "delete block · task and subtasks"),
+    ("Alt+↑ Alt+↓", "move block · swap task with sibling"),
     ("Alt+Shift+↑ ↓", "shorten / lengthen block"),
-    ("Delete, Backspace", "delete block"),
+    ("Shift+↑ Shift+↓", "select a range for a new block"),
+    ("1 2 3", "standard / scheduled / deep"),
+    ("x, Space", "tick / untick task"),
+    ("> Alt+→, < Alt+←", "indent / outdent task"),
+    ("b", "schedule task on the timeline"),
     ("^+Z", "undo"),
     ("^+Shift+Z, ^+Y", "redo"),
     ("^+S", "save (autosaves anyway)"),
     ("^+,", "choose theme"),
     ("F1, ?", "this help"),
     ("^+Q", "quit"),
-    ("mouse drag", "create a block"),
+    ("mouse drag", "create or move a block"),
+    ("drag a task", "schedule it as a 1-hour block"),
+    ("click [ ]", "tick / untick task"),
 ];
 
 fn overlay(ctx: &egui::Context, id: &str, theme: &Theme, contents: impl FnOnce(&mut egui::Ui)) {

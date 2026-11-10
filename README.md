@@ -1,6 +1,6 @@
 # time-block-planner
 
-A one-day-at-a-time time block planner with a terminal look. It is a native GUI app written in Rust with egui, and it runs on Windows, macOS and Linux. Blocks are **standard** (the default), **scheduled** (for calendar meetings) or **deep** (deep work). You can create them by dragging with the mouse or entirely from the keyboard.
+A one-day-at-a-time time block planner with a terminal look. It is a native GUI app written in Rust with egui, and it runs on Windows, macOS and Linux. Blocks are **standard** (the default), **scheduled** (for calendar meetings) or **deep** (deep work). You can create them by dragging with the mouse or entirely from the keyboard. A nested task list sits beside the timeline; drag a task onto the day, or press `b`, to schedule it as a block.
 
 ## Build
 
@@ -31,32 +31,54 @@ Each day is one plaintext file, `YYYY-MM-DD.txt`:
 
 `config.txt` in the same folder stores the chosen theme (`theme=rose-pine`).
 
+The task list is saved to `tasks.txt` in the same folder, as a nested Markdown checklist:
+
+```
+- [ ] Write quarterly report
+  - [x] Outline
+  - [ ] Draft
+- [ ] Call the bank
+```
+
+- Each level of nesting is two spaces of indentation; a tab counts as two spaces.
+- `- [ ] ` marks an open task and `- [x] ` (or `- [X] `) a done one. Any other non-blank line becomes an open task, with the line as its title.
+- The first task is top-level, and each task can be at most one level deeper than the task above it (deeper lines are pulled up). Indentation stops at 8 levels (16 spaces).
+- Blank lines and a leading byte-order mark are dropped. The app writes the file back in this normalized form, and deletes it when the list is empty.
+
 ## Keys
 
-`Ctrl` is `Cmd` on macOS, and `Alt` is `Option`.
+`Ctrl` is `Cmd` on macOS, and `Alt` is `Option`. The window has two panes: the task list on the left and the day's timeline on the right. `Tab` switches between them; most keys act on the focused pane. Single-letter keys never fire while you are typing a title.
 
-| Key | Action |
-|---|---|
-| `↑` `↓` | move the cursor 15 min |
-| `PageUp` `PageDown` | move 1 hour |
-| `Home` `End`, `Ctrl+↑` `Ctrl+↓` | start / end of day |
-| `←` `→` | previous / next day |
-| `Ctrl+T` | today |
-| `Tab` `Shift+Tab` | next / previous block |
-| `Ctrl+N` | new block at the cursor (then `↑`/`↓` to size it, `Enter` to create, `Esc` to cancel) |
-| `Shift+↑` `Shift+↓` | select a range for a new block, like selecting text |
-| `Enter`, `F2` | rename the block (`Enter` saves, `Esc` reverts) |
-| `1` `2` `3` | set the type: standard / scheduled / deep |
-| `Alt+↑` `Alt+↓` | move the block |
-| `Alt+Shift+↑` `Alt+Shift+↓` | make the block shorter / longer |
-| `Delete`, `Backspace` | delete the block |
-| `Ctrl+Z` / `Ctrl+Shift+Z`, `Ctrl+Y` | undo / redo |
-| `Ctrl+S` | save (the app also saves automatically) |
-| `Ctrl+,` | choose a theme (`↑`/`↓` previews, `Enter` keeps it, `Esc` reverts) |
-| `F1`, `?` | help |
-| `Ctrl+Q` | quit |
+| Key | Timeline | Tasks |
+|---|---|---|
+| `Tab` | switch to the tasks pane | switch to the timeline |
+| `←` `→` | previous / next day | previous / next day |
+| `t`, `Ctrl+T` | today | today |
+| `↑` `↓` | move the cursor 15 min | select the previous / next task |
+| `PageUp` `PageDown` | move 1 hour | move 10 tasks |
+| `Home` `End` | 00:00 / 23:45 | first / last task |
+| `Ctrl+↑` `Ctrl+↓` | previous / next block | |
+| `n`, `Ctrl+N` | new block at the cursor (then `↑`/`↓` to size it, `Enter` to create, `Esc` to cancel) | new task after the selected task and its subtasks, at the same level |
+| `N` (`Shift+n`) | | new subtask directly under the selected task |
+| `Enter`, `F2`, `e` | rename the block (`Enter` saves, `Esc` reverts) | rename the task (`Esc` on a just-created task removes it) |
+| `d`, `Delete`, `Backspace` | delete the block | delete the task and its subtasks |
+| `Alt+↑` `Alt+↓` | move the block 15 min | swap the task with its previous / next sibling |
+| `Alt+Shift+↑` `Alt+Shift+↓` | make the block shorter / longer | |
+| `Shift+↑` `Shift+↓` | select a range for a new block, like selecting text | |
+| `1` `2` `3` | set the type: standard / scheduled / deep | |
+| `x`, `Space` | | tick / untick the task |
+| `Alt+→`, `>` / `Alt+←`, `<` | | indent / outdent the task |
+| `b` | | schedule the task: switch to the timeline and start a block at the cursor, titled with the task |
+| `Ctrl+Z` / `Ctrl+Shift+Z`, `Ctrl+Y` | undo / redo (block and task edits share one history) | same |
+| `Ctrl+S` | save (the app also saves automatically) | same |
+| `Ctrl+,` | choose a theme (`↑`/`↓` previews, `Enter` keeps it, `Esc` reverts) | same |
+| `F1`, `?` | help | help |
+| `Ctrl+Q` | quit | quit |
 
-Mouse: drag on the timeline to create a block, and click to move the cursor.
+Mouse:
+
+- **Timeline:** drag in empty space to create a block, drag a block to move it (`Esc` cancels the move), and click to place the cursor.
+- **Tasks pane:** click a task to select it, and click its `[ ]` to tick it. Drag a task onto the timeline to create a block of up to one hour there (shorter if the next block starts sooner).
 
 ## Themes
 

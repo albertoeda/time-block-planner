@@ -153,6 +153,12 @@ impl AppState {
         }
     }
 
+    /// Where a task dropped at `slot` would land: up to one hour, clipped by neighbours and the
+    /// day end. `None` when `slot` is occupied. Shared by `drop_task` and the hover preview.
+    pub fn drop_range(&self, slot: Slot) -> Option<(Slot, Slot)> {
+        self.day.free_range(slot, Slot((slot.0 + 3).min(LAST_SLOT)))
+    }
+
     /// Drops a task on the timeline: a one-hour block (clipped by neighbours and the day end).
     pub fn drop_task(&mut self, task_idx: usize, slot: Slot) {
         if self.mode != Mode::Normal {
@@ -160,7 +166,7 @@ impl AppState {
         }
         let Some(task) = self.tasks.items().get(task_idx) else { return };
         let title = task.title.clone();
-        let Some((start, end)) = self.day.free_range(slot, Slot((slot.0 + 3).min(LAST_SLOT))) else {
+        let Some((start, end)) = self.drop_range(slot) else {
             self.status = "slot occupied".into();
             return;
         };
@@ -176,6 +182,22 @@ impl AppState {
                 self.history.pop();
                 self.status = "slot occupied".into();
             }
+        }
+    }
+
+    /// A mouse click on task `idx`: focus the tasks pane and select it. `on_checkbox` also
+    /// toggles `done` (undoable, saved). Ignored outside Normal mode or for a bad index.
+    pub fn click_task(&mut self, idx: usize, on_checkbox: bool) {
+        if self.mode != Mode::Normal || idx >= self.tasks.len() {
+            return;
+        }
+        self.focus = Focus::Tasks;
+        self.task_sel = idx;
+        if on_checkbox {
+            self.edit_task(|t, i| {
+                t.toggle_done(i);
+                Some(i)
+            });
         }
     }
 
@@ -1109,6 +1131,42 @@ mod tests {
         s.apply(Command::Cancel, D);
         assert_eq!(s.tasks.len(), 1);
         assert_eq!(s.mode, Mode::Normal);
+    }
+
+    #[test]
+    fn click_task_selects_and_toggles() {
+        let (_t, mut s) = st_tasks("- [ ] a\n- [ ] b\n");
+        s.focus = Focus::Timeline;
+        s.click_task(1, false);
+        assert_eq!((s.focus, s.selected_task()), (Focus::Tasks, Some(1)));
+        s.click_task(1, true);
+        assert!(s.tasks.items()[1].done);
+        s.apply(Command::Undo, D);
+        assert!(!s.tasks.items()[1].done);
+    }
+
+    #[test]
+    fn click_task_ignores_bad_index_and_other_modes() {
+        let (_t, mut s) = st_tasks("- [ ] a\n- [ ] b\n");
+        s.focus = Focus::Timeline;
+        s.click_task(5, true);
+        assert_eq!((s.focus, s.task_sel), (Focus::Timeline, 0));
+        s.apply(Command::New, D);
+        s.click_task(1, true);
+        assert!(!s.tasks.items()[1].done);
+        assert!(matches!(s.mode, Mode::Create { .. }));
+    }
+
+    #[test]
+    fn drop_range_matches_drop_task() {
+        let (_t, mut s) = st_tasks("- [ ] a\n");
+        s.day
+            .add(Block { start: Slot(42), end: Slot(44), kind: Kind::Deep, title: String::new() })
+            .unwrap();
+        assert_eq!(s.drop_range(Slot(40)), Some((Slot(40), Slot(42))));
+        assert_eq!(s.drop_range(Slot(10)), Some((Slot(10), Slot(14))));
+        assert_eq!(s.drop_range(Slot(95)), Some((Slot(95), Slot(96))));
+        assert_eq!(s.drop_range(Slot(43)), None);
     }
 
     #[test]

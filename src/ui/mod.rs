@@ -1,6 +1,7 @@
 //! eframe/egui front end: maps input to `Command`s and draws `AppState` in a terminal style.
 
 pub mod chrome;
+pub mod tasks;
 pub mod timeline;
 
 use chrono::{Local, NaiveDate};
@@ -170,6 +171,7 @@ impl eframe::App for PlannerApp {
             Some(_) => timeline::Scroll::None,
         };
         self.scrolled_to = Some(target);
+        tasks::show(ui, &mut self.state, theme);
         timeline::show(ui, &mut self.state, theme, scroll);
 
         match self.state.mode {
