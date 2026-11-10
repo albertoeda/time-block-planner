@@ -1,12 +1,14 @@
 //! Timeline drawing and mouse hit-testing.
 
-use chrono::{Local, NaiveTime, Timelike};
+use std::cmp::Ordering;
+
+use chrono::{Local, NaiveDate, NaiveTime, Timelike};
 use egui::{Align, Align2, Rect, Sense, Shape, Stroke, StrokeKind, TextStyle, pos2, vec2};
 
-use super::chrome::{color, faded};
+use super::chrome::{color, faded, pane_header};
 use crate::model::{Kind, SLOTS_PER_DAY, Slot};
-use crate::state::{AppState, Command, Mode, START_SLOT};
-use crate::theme::Theme;
+use crate::state::{AppState, Command, Focus, Mode, START_SLOT};
+use crate::theme::{Theme, Tone};
 
 /// The slot row containing screen y-coordinate `y`, clamped to the day.
 pub fn y_to_slot(y: f32, top: f32, row_h: f32) -> Slot {
@@ -35,6 +37,19 @@ pub fn now_offset(t: NaiveTime) -> f32 {
     t.num_seconds_from_midnight() as f32 / 900.0
 }
 
+/// A block's tone: on days before `today` everything is past and after it everything is
+/// future; on `today`, it is past once it ends at or before `now` (fractional slots), now
+/// while `now` falls inside it, and future before it starts.
+pub fn tone(date: NaiveDate, today: NaiveDate, start: Slot, end: Slot, now: f32) -> Tone {
+    match date.cmp(&today) {
+        Ordering::Less => Tone::Past,
+        Ordering::Greater => Tone::Future,
+        Ordering::Equal if end.0 as f32 <= now => Tone::Past,
+        Ordering::Equal if start.0 as f32 > now => Tone::Future,
+        Ordering::Equal => Tone::Now,
+    }
+}
+
 /// Drag-and-drop payload: the title of a task dragged onto the timeline (by value, so it
 /// cannot go stale if the task list changes mid-drag).
 #[derive(Clone)]
@@ -57,6 +72,11 @@ pub fn show(ui: &mut egui::Ui, state: &mut AppState, theme: &Theme, scroll: Scro
     egui::CentralPanel::default_margins()
         .frame(frame)
         .show(ui, |ui| {
+            let mut title = state.date.format("%a %Y-%m-%d").to_string();
+            if state.date == super::today() {
+                title.push_str(" · today");
+            }
+            pane_header(ui, &title, state.focus == Focus::Timeline, theme);
             egui::ScrollArea::vertical()
                 .auto_shrink(false)
                 .show(ui, |ui| {
@@ -144,6 +164,8 @@ fn draw(ui: &mut egui::Ui, state: &mut AppState, theme: &Theme, scroll: Scroll) 
     let blink_on = ui.input(|i| i.time) % 1.0 < 0.5;
     let inset = char_w * 0.5;
     let mark = row_h * 0.45;
+    let today = super::today();
+    let now = now_offset(Local::now().time());
     for (idx, block) in state.day.blocks().iter().enumerate() {
         let r = row_rect(block.start.0, block.end.0);
         // 1 px shy top and bottom so adjacent blocks show a seam.
@@ -151,7 +173,7 @@ fn draw(ui: &mut egui::Ui, state: &mut AppState, theme: &Theme, scroll: Scroll) 
             pos2(r.left(), r.top() + 1.0),
             pos2(r.right(), r.bottom() - 1.0),
         );
-        let fill = theme.block_fill(block.kind);
+        let fill = theme.block_fill(tone(state.date, today, block.start, block.end, now));
         let alpha = if moving == Some(idx) { 0.5 } else { 1.0 };
         let ink = faded(theme.text_on(fill), alpha);
         painter.rect_filled(body, 0.0, faded(fill, alpha));
@@ -234,10 +256,11 @@ fn draw(ui: &mut egui::Ui, state: &mut AppState, theme: &Theme, scroll: Scroll) 
     match state.day.block_at(state.cursor) {
         Some(i) => {
             let b = &state.day.blocks()[i];
+            // Foreground, not accent: the accent would vanish on a block drawn in it.
             painter.rect_stroke(
                 row_rect(b.start.0, b.end.0),
                 0.0,
-                accent(2.0),
+                Stroke::new(2.0, color(theme.fg)),
                 StrokeKind::Inside,
             );
         }
@@ -327,6 +350,18 @@ mod tests {
             ],
             [Marker::Circle, Marker::Square, Marker::Triangle]
         );
+    }
+
+    #[test]
+    fn tone_by_time() {
+        let d = |n| NaiveDate::from_ymd_opt(2026, 11, n).unwrap();
+        let (s, e) = (Slot(36), Slot(40)); // 09:00-10:00
+        assert_eq!(tone(d(9), d(10), s, e, 0.0), Tone::Past);
+        assert_eq!(tone(d(11), d(10), s, e, 90.0), Tone::Future);
+        assert_eq!(tone(d(10), d(10), s, e, 35.9), Tone::Future);
+        assert_eq!(tone(d(10), d(10), s, e, 36.0), Tone::Now);
+        assert_eq!(tone(d(10), d(10), s, e, 39.9), Tone::Now);
+        assert_eq!(tone(d(10), d(10), s, e, 40.0), Tone::Past);
     }
 
     #[test]

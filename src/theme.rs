@@ -4,10 +4,19 @@
 use std::collections::HashMap;
 use std::sync::OnceLock;
 
-use crate::model::Kind;
-
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub struct Rgb(pub u8, pub u8, pub u8);
+
+/// Where a block sits relative to the current time; sets how bright it is drawn.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum Tone {
+    /// Already over: dimmest.
+    Past,
+    /// Not started yet: medium.
+    Future,
+    /// Under way right now: the full accent.
+    Now,
+}
 
 #[derive(Clone, Debug)]
 pub struct Theme {
@@ -17,27 +26,22 @@ pub struct Theme {
     /// Gridlines and secondary text.
     pub dim: Rgb,
     pub accent: Rgb,
-    pub standard: Rgb,
-    pub scheduled: Rgb,
-    pub deep: Rgb,
     pub selection: Rgb,
     pub error: Rgb,
     pub is_light: bool,
 }
 
 impl Theme {
-    pub fn kind_color(&self, k: Kind) -> Rgb {
-        match k {
-            Kind::Standard => self.standard,
-            Kind::Scheduled => self.scheduled,
-            Kind::Deep => self.deep,
-        }
-    }
-
-    /// Opaque block body color: 75% of the kind color over 25% of the background.
-    pub fn block_fill(&self, k: Kind) -> Rgb {
-        let (a, b) = (self.kind_color(k), self.bg);
-        let m = |x: u8, y: u8| (0.75 * x as f32 + 0.25 * y as f32).round() as u8;
+    /// Opaque block body color, the same for every kind (the corner marker tells kinds
+    /// apart): the theme accent mixed over the background, by where the block sits in time.
+    pub fn block_fill(&self, tone: Tone) -> Rgb {
+        let w = match tone {
+            Tone::Past => 0.3,
+            Tone::Future => 0.6,
+            Tone::Now => 1.0,
+        };
+        let (a, b) = (self.accent, self.bg);
+        let m = |x: u8, y: u8| (w * x as f32 + (1.0 - w) * y as f32).round() as u8;
         Rgb(m(a.0, b.0), m(a.1, b.1), m(a.2, b.2))
     }
 
@@ -140,30 +144,12 @@ pub fn derive_theme(name: &'static str, c: &HashMap<String, Rgb>) -> Result<Them
     };
     let (bg, fg) = (get("background")?, get("foreground")?);
 
-    let mut taken = vec![bg];
-    let mut pick = |candidates: &[&str]| -> Result<Rgb, String> {
-        for k in candidates {
-            let color = get(k)?;
-            if !taken.contains(&color) {
-                taken.push(color);
-                return Ok(color);
-            }
-        }
-        Ok(fg)
-    };
-    let standard = pick(&["color4", "color12", "color6", "color14"])?;
-    let scheduled = pick(&["color3", "color11", "color5", "color13"])?;
-    let deep = pick(&["color2", "color10", "color6", "color14", "color5"])?;
-
     Ok(Theme {
         name,
         bg,
         fg,
         dim: mix(fg, bg),
         accent: get("accent")?,
-        standard,
-        scheduled,
-        deep,
         selection: get("selection_background")?,
         error: get("color1")?,
         is_light: luminance(bg) > 0.5,
@@ -244,23 +230,8 @@ mod tests {
         let t = &themes()[theme_index("gruvbox")];
         assert_eq!(t.bg, Rgb(0x28, 0x28, 0x28));
         assert_eq!(t.fg, Rgb(0xd4, 0xbe, 0x98));
-        assert_eq!(t.standard, Rgb(0x7d, 0xae, 0xa3));
-        assert_eq!(t.scheduled, Rgb(0xd8, 0xa6, 0x57));
-        assert_eq!(t.deep, Rgb(0xa9, 0xb6, 0x65));
+        assert_eq!(t.accent, Rgb(0x7d, 0xae, 0xa3));
         assert_eq!(t.selection, Rgb(0xd6, 0x5d, 0x0e));
-    }
-
-    #[test]
-    fn kind_colors_pick_distinct_candidates() {
-        let mut c = base_palette();
-        c.insert("color12".into(), Rgb(1, 1, 1));
-        c.insert("color11".into(), Rgb(2, 2, 2));
-        c.insert("color10".into(), Rgb(3, 3, 3));
-        let t = derive_theme("x", &c).unwrap();
-        assert_eq!(t.standard, Rgb(0x80, 0x80, 0x80));
-        assert_eq!(t.scheduled, Rgb(2, 2, 2));
-        assert_eq!(t.deep, Rgb(3, 3, 3));
-        assert_eq!(t.kind_color(Kind::Deep), Rgb(3, 3, 3));
     }
 
     #[test]
@@ -291,18 +262,20 @@ mod tests {
     #[test]
     fn block_fill_is_opaque_mix() {
         let t = &themes()[theme_index("gruvbox")];
-        // Per channel (0.75 * a + 0.25 * b).round(): a9b665 over 282828.
-        assert_eq!(t.block_fill(Kind::Deep), Rgb(0x89, 0x93, 0x56));
+        // Per channel (w * a + (1 - w) * b).round(): accent 7daea3 over 282828.
+        assert_eq!(t.block_fill(Tone::Future), Rgb(0x5b, 0x78, 0x72));
+        assert_eq!(t.block_fill(Tone::Past), Rgb(0x42, 0x50, 0x4d));
+        assert_eq!(t.block_fill(Tone::Now), t.accent);
     }
 
     #[test]
     fn text_on_picks_contrast() {
         for t in themes() {
-            for k in [Kind::Standard, Kind::Scheduled, Kind::Deep] {
-                let f = t.block_fill(k);
+            for tone in [Tone::Past, Tone::Future, Tone::Now] {
+                let f = t.block_fill(tone);
                 let x = t.text_on(f);
                 let other = if x == t.fg { t.bg } else { t.fg };
-                assert!(contrast(x, f) >= contrast(other, f), "{} {:?}", t.name, k);
+                assert!(contrast(x, f) >= contrast(other, f), "{} {tone:?}", t.name);
             }
         }
     }

@@ -2,15 +2,18 @@
 
 use egui::text::LayoutJob;
 use egui::{
-    DragAndDrop, Id, LayerId, Order, Rect, RichText, Sense, Stroke, StrokeKind, TextFormat,
-    TextStyle, pos2, vec2,
+    DragAndDrop, Id, LayerId, Order, Rect, Sense, Stroke, StrokeKind, TextFormat, TextStyle, pos2,
+    vec2,
 };
 
-use super::chrome::color;
+use super::chrome::{color, pane_header};
 use super::timeline::TaskDrag;
 use crate::state::{AppState, Command, Focus, Mode};
 use crate::tasks::Task;
 use crate::theme::Theme;
+
+/// Clickable row below the last task that appends a new one.
+const NEW_TASK_ROW: &str = "+ new task";
 
 /// A row's `(prefix, title)`: two spaces per depth level plus the `[ ]`/`[x]` box, and the title
 /// (`(untitled)` when empty).
@@ -38,17 +41,7 @@ pub fn show(ui: &mut egui::Ui, state: &mut AppState, theme: &Theme) -> f32 {
             // Fill the pane so its width never follows the content (a truncated header
             // would otherwise shrink the pane a little on every repaint).
             ui.set_min_width(ui.available_width());
-            let head = if state.focus == Focus::Tasks {
-                theme.accent
-            } else {
-                theme.dim
-            };
-            let text = format!("┌─ tasks ─{}", "─".repeat(200));
-            ui.add(egui::Label::new(RichText::new(text).color(color(head))).truncate());
-            if state.tasks.is_empty() {
-                ui.label(RichText::new("n: new task").color(color(theme.dim)));
-                return;
-            }
+            pane_header(ui, "tasks", state.focus == Focus::Tasks, theme);
             egui::ScrollArea::vertical()
                 .auto_shrink(false)
                 .show(ui, |ui| draw(ui, state, theme));
@@ -77,7 +70,8 @@ fn draw(ui: &mut egui::Ui, state: &mut AppState, theme: &Theme) {
         _ => None,
     };
     let blink_on = ui.input(|i| i.time) % 1.0 < 0.5;
-    let selected = state.selected_task();
+    // Selected row; index `len` is the "+ new task" row.
+    let sel_row = state.task_sel.min(state.tasks.len());
     let outline = if state.focus == Focus::Tasks {
         theme.accent
     } else {
@@ -86,8 +80,19 @@ fn draw(ui: &mut egui::Ui, state: &mut AppState, theme: &Theme) {
 
     // Scroll to the selection only when it changes, so the wheel still works.
     let scrolled_id = Id::unique("tasks-scrolled-to");
-    let scroll = ui.data(|d| d.get_temp::<Option<usize>>(scrolled_id)) != Some(selected);
-    ui.data_mut(|d| d.insert_temp(scrolled_id, selected));
+    let scroll = ui.data(|d| d.get_temp::<usize>(scrolled_id)) != Some(sel_row);
+    ui.data_mut(|d| d.insert_temp(scrolled_id, sel_row));
+    let mark_selected = |ui: &egui::Ui, rect: Rect| {
+        ui.painter().rect_stroke(
+            rect,
+            0.0,
+            Stroke::new(1.5, color(outline)),
+            StrokeKind::Inside,
+        );
+        if scroll {
+            ui.scroll_to_rect(rect.expand2(vec2(0.0, row_h * 2.0)), None);
+        }
+    };
 
     let mut clicked = None;
     for (idx, task) in state.tasks.items().iter().enumerate() {
@@ -116,16 +121,8 @@ fn draw(ui: &mut egui::Ui, state: &mut AppState, theme: &Theme) {
         );
         painter.galley(text_pos, galley, fg);
 
-        if selected == Some(idx) {
-            painter.rect_stroke(
-                rect,
-                0.0,
-                Stroke::new(1.5, color(outline)),
-                StrokeKind::Inside,
-            );
-            if scroll {
-                ui.scroll_to_rect(rect.expand2(vec2(0.0, row_h * 2.0)), None);
-            }
+        if sel_row == idx {
+            mark_selected(ui, rect);
         }
 
         if response.clicked()
@@ -140,15 +137,39 @@ fn draw(ui: &mut egui::Ui, state: &mut AppState, theme: &Theme) {
             DragAndDrop::set_payload(ui.ctx(), TaskDrag(task.title.clone()));
         }
     }
+    // "+ new task" row after the last task.
+    let (rect, response) = ui.allocate_exact_size(vec2(width, row_h), Sense::click());
+    let on_row = sel_row == state.tasks.len();
+    let lit = state.mode == Mode::Normal
+        && (response.hovered() || (on_row && state.focus == Focus::Tasks));
+    if on_row {
+        mark_selected(ui, rect);
+    }
+    ui.painter_at(rect).text(
+        pos2(rect.left() + char_w * 0.5, rect.center().y),
+        egui::Align2::LEFT_CENTER,
+        NEW_TASK_ROW,
+        font,
+        color(if lit { theme.accent } else { theme.dim }),
+    );
+    let new_task = response.clicked();
+
     if editing.is_some() {
         ui.ctx()
             .request_repaint_after(std::time::Duration::from_millis(250));
     }
-    if let Some((idx, on_checkbox)) = clicked {
+    let finish_edit = |state: &mut AppState| {
         if matches!(state.mode, Mode::EditTask { .. } | Mode::EditTitle { .. }) {
             state.apply(Command::Confirm, super::today());
         }
+    };
+    if let Some((idx, on_checkbox)) = clicked {
+        finish_edit(state);
         state.click_task(idx, on_checkbox);
+    }
+    if new_task {
+        finish_edit(state);
+        state.new_task_at_end();
     }
 }
 

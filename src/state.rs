@@ -74,7 +74,8 @@ pub enum Command {
     Indent,
     Outdent,
     ScheduleTask,
-    SwitchPane,
+    /// Focus the given pane.
+    FocusPane(Focus),
     Undo,
     Redo,
     SaveNow,
@@ -153,8 +154,14 @@ impl AppState {
         self.day.block_at(self.cursor)
     }
 
+    /// The selected task, or `None` when the "+ new task" row (index `len`) is selected.
     pub fn selected_task(&self) -> Option<usize> {
-        (!self.tasks.is_empty()).then(|| self.task_sel.min(self.tasks.len() - 1))
+        (self.task_sel < self.tasks.len()).then_some(self.task_sel)
+    }
+
+    /// Whether the "+ new task" row after the last task is selected.
+    pub fn new_task_row_selected(&self) -> bool {
+        self.task_sel >= self.tasks.len()
     }
 
     pub fn pending_range(&self) -> Option<(Slot, Slot)> {
@@ -224,6 +231,28 @@ impl AppState {
                 Some(i)
             });
         }
+    }
+
+    /// The "+ new task" row: a new top-level task after the last one, ready to type.
+    pub fn new_task_at_end(&mut self) {
+        if self.mode != Mode::Normal {
+            return;
+        }
+        self.focus = Focus::Tasks;
+        self.insert_task(None, false);
+    }
+
+    /// Inserts an empty task (see `TaskList::insert`) and starts editing its title.
+    fn insert_task(&mut self, after: Option<usize>, child: bool) {
+        self.checkpoint_tasks();
+        let idx = self.tasks.insert(after, child);
+        self.task_sel = idx;
+        self.title_buf.clear();
+        self.mode = Mode::EditTask {
+            idx,
+            original: String::new(),
+            is_new: true,
+        };
     }
 
     pub fn save(&mut self) {
@@ -417,12 +446,7 @@ impl AppState {
                 }
             }
             Command::ToggleHelp => self.mode = Mode::Help,
-            Command::SwitchPane => {
-                self.focus = match self.focus {
-                    Focus::Tasks => Focus::Timeline,
-                    Focus::Timeline => Focus::Tasks,
-                };
-            }
+            Command::FocusPane(f) => self.focus = f,
             _ => match self.focus {
                 Focus::Tasks => self.apply_tasks(cmd),
                 Focus::Timeline => self.apply_timeline(cmd),
@@ -431,27 +455,20 @@ impl AppState {
     }
 
     fn apply_tasks(&mut self, cmd: Command) {
-        let last = self.tasks.len().saturating_sub(1) as i32;
-        let sel = self.selected_task().unwrap_or(0) as i32;
-        let go = |s: &mut AppState, v: i32| s.task_sel = v.clamp(0, last) as usize;
+        // Rows are the tasks plus the "+ new task" row at index `len`.
+        let new_row = self.tasks.len() as i32;
+        let sel = self.task_sel.min(self.tasks.len()) as i32;
+        let go = |s: &mut AppState, v: i32| s.task_sel = v.clamp(0, new_row) as usize;
         match cmd {
             Command::Up => go(self, sel - 1),
             Command::Down => go(self, sel + 1),
             Command::PageUp => go(self, sel - 10),
             Command::PageDown => go(self, sel + 10),
             Command::Home => go(self, 0),
-            Command::End => go(self, last),
+            Command::End => go(self, new_row - 1),
+            Command::EditTitle if self.new_task_row_selected() => self.insert_task(None, false),
             Command::New | Command::NewChild => {
-                let after = self.selected_task();
-                self.checkpoint_tasks();
-                let idx = self.tasks.insert(after, cmd == Command::NewChild);
-                self.task_sel = idx;
-                self.title_buf.clear();
-                self.mode = Mode::EditTask {
-                    idx,
-                    original: String::new(),
-                    is_new: true,
-                };
+                self.insert_task(self.selected_task(), cmd == Command::NewChild)
             }
             Command::ScheduleTask => {
                 let Some(idx) = self.selected_task() else {
@@ -506,7 +523,8 @@ impl AppState {
         match op(&mut self.tasks, idx) {
             Some(new_idx) => {
                 self.push_history(Snapshot::Tasks(before));
-                self.task_sel = new_idx;
+                // Stay on a task (e.g. after deleting the last one) unless none are left.
+                self.task_sel = new_idx.min(self.tasks.len().saturating_sub(1));
                 self.save_tasks();
             }
             None => self.status = "can't move there".into(),
@@ -691,7 +709,7 @@ impl AppState {
                 } else {
                     self.history.push(current)
                 }
-                self.task_sel = self.selected_task().unwrap_or(0);
+                self.task_sel = self.task_sel.min(self.tasks.len());
                 self.save_tasks();
                 return;
             }
@@ -835,7 +853,7 @@ mod tests {
         let (_t, mut s) = st_with_block(36, 40);
         s.apply(Command::EditTitle, D);
         s.apply(Command::Backspace, D);
-        s.apply(Command::Text("b".into()), D);
+        s.apply(Command::Text("p".into()), D);
         s.apply(Command::Cancel, D);
         assert_eq!(s.day.blocks()[0].title, "a");
         assert_eq!(s.mode, Mode::Normal);
@@ -1088,6 +1106,35 @@ mod tests {
     }
 
     #[test]
+    fn new_task_row_appends_top_level() {
+        let (_t, mut s) = st_tasks(
+            "- [ ] a
+  - [ ] b
+- [ ] c
+",
+        );
+        s.focus = Focus::Timeline;
+        s.task_sel = 0;
+        s.new_task_at_end();
+        assert_eq!(s.focus, Focus::Tasks);
+        s.apply(Command::Text("d".into()), D);
+        s.apply(Command::Confirm, D);
+        assert_eq!(
+            s.store.load_tasks().unwrap(),
+            parse_tasks(
+                "- [ ] a
+  - [ ] b
+- [ ] c
+- [ ] d
+"
+            )
+        );
+        assert_eq!(s.selected_task(), Some(3));
+        s.apply(Command::Undo, D);
+        assert_eq!(s.tasks.len(), 3);
+    }
+
+    #[test]
     fn task_edit_swallows_shortcuts() {
         let (_t, mut s) = st_tasks("- [ ] a\n");
         s.apply(Command::EditTitle, D);
@@ -1097,7 +1144,7 @@ mod tests {
             Command::Indent,
             Command::ScheduleTask,
             Command::New,
-            Command::SwitchPane,
+            Command::FocusPane(Focus::Timeline),
         ] {
             s.apply(c, D);
         }
@@ -1121,7 +1168,7 @@ mod tests {
     fn undo_interleaves_tasks_and_blocks() {
         let (_t, mut s) = st_tasks("- [ ] a\n");
         s.apply(Command::ToggleDone, D);
-        s.apply(Command::SwitchPane, D);
+        s.apply(Command::FocusPane(Focus::Timeline), D);
         s.cursor = Slot(10);
         s.apply(Command::New, D);
         s.apply(Command::Confirm, D);
@@ -1156,13 +1203,64 @@ mod tests {
     }
 
     #[test]
-    fn switch_pane_toggles_focus() {
+    fn focus_pane_sets_focus() {
         let (_t, mut s) = st();
         assert_eq!(s.focus, Focus::Timeline);
-        s.apply(Command::SwitchPane, D);
+        s.apply(Command::FocusPane(Focus::Tasks), D);
         assert_eq!(s.focus, Focus::Tasks);
-        s.apply(Command::SwitchPane, D);
+        s.apply(Command::FocusPane(Focus::Tasks), D);
+        assert_eq!(s.focus, Focus::Tasks);
+        s.apply(Command::FocusPane(Focus::Timeline), D);
         assert_eq!(s.focus, Focus::Timeline);
+    }
+
+    #[test]
+    fn new_task_row_is_reachable_from_keyboard() {
+        let (_t, mut s) = st_tasks(
+            "- [ ] a
+- [ ] b
+",
+        );
+        s.apply(Command::End, D);
+        assert_eq!(s.selected_task(), Some(1));
+        s.apply(Command::Down, D);
+        assert!(s.new_task_row_selected());
+        assert_eq!(s.selected_task(), None);
+        s.apply(Command::Down, D);
+        assert!(s.new_task_row_selected());
+        // Task-only commands do nothing on the row.
+        s.apply(Command::ToggleDone, D);
+        s.apply(Command::Delete, D);
+        assert_eq!(s.tasks.len(), 2);
+        s.apply(Command::EditTitle, D);
+        s.apply(Command::Text("c".into()), D);
+        s.apply(Command::Confirm, D);
+        assert_eq!(
+            s.store.load_tasks().unwrap(),
+            parse_tasks(
+                "- [ ] a
+- [ ] b
+- [ ] c
+"
+            )
+        );
+        assert_eq!(s.selected_task(), Some(2));
+        s.apply(Command::Up, D);
+        assert_eq!(s.selected_task(), Some(1));
+    }
+
+    #[test]
+    fn deleting_last_task_keeps_a_task_selected() {
+        let (_t, mut s) = st_tasks(
+            "- [ ] a
+- [ ] b
+",
+        );
+        s.apply(Command::End, D);
+        s.apply(Command::Delete, D);
+        assert_eq!(s.selected_task(), Some(0));
+        s.apply(Command::Delete, D);
+        assert!(s.new_task_row_selected());
     }
 
     #[test]

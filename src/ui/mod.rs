@@ -8,7 +8,7 @@ use chrono::{Local, NaiveDate};
 use egui::{Event, FontFamily, Key, Modifiers, TextStyle};
 
 use crate::model::{Kind, Slot};
-use crate::state::{AppState, Command, Mode};
+use crate::state::{AppState, Command, Focus, Mode};
 use crate::storage::Store;
 use crate::theme::themes;
 
@@ -23,54 +23,33 @@ pub fn key_to_command(key: Key, m: Modifiers, mode: &Mode) -> Option<Command> {
         Mode::Normal => Some(match key {
             Key::ArrowUp | Key::ArrowDown => {
                 let up = key == Key::ArrowUp;
+                let pick = |a: C, b: C| if up { a } else { b };
                 match (m.command, m.alt, m.shift) {
-                    (true, false, false) => {
-                        if up {
-                            C::PrevBlock
-                        } else {
-                            C::NextBlock
-                        }
-                    }
-                    (false, true, true) => {
-                        if up {
-                            C::Shrink
-                        } else {
-                            C::Grow
-                        }
-                    }
-                    (false, true, false) => {
-                        if up {
-                            C::MoveUp
-                        } else {
-                            C::MoveDown
-                        }
-                    }
-                    (false, false, true) => {
-                        if up {
-                            C::ExtendUp
-                        } else {
-                            C::ExtendDown
-                        }
-                    }
-                    (false, false, false) => {
-                        if up {
-                            C::Up
-                        } else {
-                            C::Down
-                        }
-                    }
+                    (true, false, false) | (false, true, true) => pick(C::Shrink, C::Grow),
+                    (true, false, true) => pick(C::PrevBlock, C::NextBlock),
+                    (false, true, false) => pick(C::MoveUp, C::MoveDown),
+                    (false, false, true) => pick(C::ExtendUp, C::ExtendDown),
+                    (false, false, false) => pick(C::Up, C::Down),
                     _ => return None,
                 }
             }
             Key::ArrowLeft if m.alt && !m.command && !m.shift => C::Outdent,
             Key::ArrowRight if m.alt && !m.command && !m.shift => C::Indent,
-            Key::ArrowLeft if plain => C::PrevDay,
-            Key::ArrowRight if plain => C::NextDay,
+            Key::ArrowLeft if m.shift && !m.command && !m.alt => C::PrevDay,
+            Key::ArrowRight if m.shift && !m.command && !m.alt => C::NextDay,
+            Key::ArrowLeft if plain => C::FocusPane(Focus::Tasks),
+            Key::ArrowRight if plain => C::FocusPane(Focus::Timeline),
             Key::PageUp if plain => C::PageUp,
             Key::PageDown if plain => C::PageDown,
             Key::Home if plain => C::Home,
             Key::End if plain => C::End,
-            Key::Tab if !m.command && !m.alt => C::SwitchPane,
+            Key::Tab if !m.command && !m.alt => {
+                if m.shift {
+                    C::Outdent
+                } else {
+                    C::Indent
+                }
+            }
             Key::Enter | Key::F2 if plain => C::EditTitle,
             Key::Delete | Key::Backspace if plain => C::Delete,
             Key::F1 if plain => C::ToggleHelp,
@@ -115,11 +94,10 @@ pub fn text_to_command(text: &str, mode: &Mode) -> Option<Command> {
         Mode::Normal => match text {
             "n" => Some(Command::New),
             "N" => Some(Command::NewChild),
-            "e" => Some(Command::EditTitle),
             "d" => Some(Command::Delete),
             "t" => Some(Command::Today),
             "x" | " " => Some(Command::ToggleDone),
-            "b" => Some(Command::ScheduleTask),
+            "p" => Some(Command::ScheduleTask),
             ">" => Some(Command::Indent),
             "<" => Some(Command::Outdent),
             "1" => Some(Command::SetKind(Kind::Standard)),
@@ -204,8 +182,6 @@ impl eframe::App for PlannerApp {
         }
         let theme = &themes()[self.state.theme];
 
-        let today = today();
-        chrome::header(ui, &self.state, theme, today);
         chrome::status_bar(ui, &self.state, theme);
 
         // First frame: open with START_SLOT (08:00) at the top; afterwards follow the cursor.
@@ -286,15 +262,27 @@ mod tests {
         );
         assert_eq!(
             key_to_command(Key::ArrowUp, M::COMMAND, n),
+            Some(Command::Shrink)
+        );
+        assert_eq!(
+            key_to_command(Key::ArrowDown, M::COMMAND, n),
+            Some(Command::Grow)
+        );
+        assert_eq!(
+            key_to_command(Key::ArrowUp, M::COMMAND | M::SHIFT, n),
             Some(Command::PrevBlock)
         );
         assert_eq!(
-            key_to_command(Key::ArrowRight, M::NONE, n),
+            key_to_command(Key::ArrowRight, M::SHIFT, n),
             Some(Command::NextDay)
         );
         assert_eq!(
+            key_to_command(Key::ArrowLeft, M::SHIFT, n),
+            Some(Command::PrevDay)
+        );
+        assert_eq!(
             key_to_command(Key::Tab, M::SHIFT, n),
-            Some(Command::SwitchPane)
+            Some(Command::Outdent)
         );
         assert_eq!(
             key_to_command(Key::Delete, M::NONE, n),
@@ -372,11 +360,10 @@ mod tests {
             ("N", Command::NewChild),
             ("x", Command::ToggleDone),
             (" ", Command::ToggleDone),
-            ("b", Command::ScheduleTask),
+            ("p", Command::ScheduleTask),
             (">", Command::Indent),
             ("<", Command::Outdent),
             ("d", Command::Delete),
-            ("e", Command::EditTitle),
             ("t", Command::Today),
         ] {
             assert_eq!(text_to_command(ch, n), Some(cmd), "{ch}");
@@ -391,14 +378,21 @@ mod tests {
     #[test]
     fn pane_and_outline_keys() {
         let n = &Mode::Normal;
+        assert_eq!(key_to_command(Key::Tab, M::NONE, n), Some(Command::Indent));
         assert_eq!(
-            key_to_command(Key::Tab, M::NONE, n),
-            Some(Command::SwitchPane)
+            key_to_command(Key::ArrowLeft, M::NONE, n),
+            Some(Command::FocusPane(Focus::Tasks))
         );
         assert_eq!(
-            key_to_command(Key::ArrowDown, M::COMMAND, n),
+            key_to_command(Key::ArrowRight, M::NONE, n),
+            Some(Command::FocusPane(Focus::Timeline))
+        );
+        assert_eq!(
+            key_to_command(Key::ArrowDown, M::COMMAND | M::SHIFT, n),
             Some(Command::NextBlock)
         );
+        assert_eq!(text_to_command("e", n), None);
+        assert_eq!(text_to_command("b", n), None);
         assert_eq!(
             key_to_command(Key::ArrowRight, M::ALT, n),
             Some(Command::Indent)
