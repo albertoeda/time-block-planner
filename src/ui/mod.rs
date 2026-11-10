@@ -23,7 +23,7 @@ pub fn key_to_command(key: Key, m: Modifiers, mode: &Mode) -> Option<Command> {
             Key::ArrowUp | Key::ArrowDown => {
                 let up = key == Key::ArrowUp;
                 match (m.command, m.alt, m.shift) {
-                    (true, false, false) => if up { C::Home } else { C::End },
+                    (true, false, false) => if up { C::PrevBlock } else { C::NextBlock },
                     (false, true, true) => if up { C::Shrink } else { C::Grow },
                     (false, true, false) => if up { C::MoveUp } else { C::MoveDown },
                     (false, false, true) => if up { C::ExtendUp } else { C::ExtendDown },
@@ -31,13 +31,15 @@ pub fn key_to_command(key: Key, m: Modifiers, mode: &Mode) -> Option<Command> {
                     _ => return None,
                 }
             }
+            Key::ArrowLeft if m.alt && !m.command && !m.shift => C::Outdent,
+            Key::ArrowRight if m.alt && !m.command && !m.shift => C::Indent,
             Key::ArrowLeft if plain => C::PrevDay,
             Key::ArrowRight if plain => C::NextDay,
             Key::PageUp if plain => C::PageUp,
             Key::PageDown if plain => C::PageDown,
             Key::Home if plain => C::Home,
             Key::End if plain => C::End,
-            Key::Tab if !m.command && !m.alt => if m.shift { C::PrevBlock } else { C::NextBlock },
+            Key::Tab if !m.command && !m.alt => C::SwitchPane,
             Key::Enter | Key::F2 if plain => C::EditTitle,
             Key::Delete | Key::Backspace if plain => C::Delete,
             Key::F1 if plain => C::ToggleHelp,
@@ -80,6 +82,15 @@ pub fn text_to_command(text: &str, mode: &Mode) -> Option<Command> {
     match mode {
         Mode::EditTitle { .. } | Mode::EditTask { .. } => Some(Command::Text(text.to_string())),
         Mode::Normal => match text {
+            "n" => Some(Command::New),
+            "N" => Some(Command::NewChild),
+            "e" => Some(Command::EditTitle),
+            "d" => Some(Command::Delete),
+            "t" => Some(Command::Today),
+            "x" | " " => Some(Command::ToggleDone),
+            "b" => Some(Command::ScheduleTask),
+            ">" => Some(Command::Indent),
+            "<" => Some(Command::Outdent),
             "1" => Some(Command::SetKind(Kind::Standard)),
             "2" => Some(Command::SetKind(Kind::Scheduled)),
             "3" => Some(Command::SetKind(Kind::Deep)),
@@ -191,9 +202,9 @@ mod tests {
         assert_eq!(key_to_command(Key::ArrowDown, M::ALT | M::SHIFT, n), Some(Command::Grow));
         assert_eq!(key_to_command(Key::ArrowUp, M::ALT | M::SHIFT, n), Some(Command::Shrink));
         assert_eq!(key_to_command(Key::ArrowDown, M::SHIFT, n), Some(Command::ExtendDown));
-        assert_eq!(key_to_command(Key::ArrowUp, M::COMMAND, n), Some(Command::Home));
+        assert_eq!(key_to_command(Key::ArrowUp, M::COMMAND, n), Some(Command::PrevBlock));
         assert_eq!(key_to_command(Key::ArrowRight, M::NONE, n), Some(Command::NextDay));
-        assert_eq!(key_to_command(Key::Tab, M::SHIFT, n), Some(Command::PrevBlock));
+        assert_eq!(key_to_command(Key::Tab, M::SHIFT, n), Some(Command::SwitchPane));
         assert_eq!(key_to_command(Key::Delete, M::NONE, n), Some(Command::Delete));
         assert_eq!(key_to_command(Key::N, M::NONE, n), None);
     }
@@ -220,6 +231,31 @@ mod tests {
         assert_eq!(text_to_command("1", &Mode::Normal), Some(Command::SetKind(Kind::Standard)));
         assert_eq!(text_to_command("3", &Mode::Normal), Some(Command::SetKind(Kind::Deep)));
         assert_eq!(text_to_command("?", &e), Some(Command::Text("?".into())));
-        assert_eq!(text_to_command("x", &Mode::Normal), None);
+        assert_eq!(text_to_command("z", &Mode::Normal), None);
+    }
+
+    #[test]
+    fn shortcuts_only_outside_editing() {
+        let n = &Mode::Normal;
+        let et = &Mode::EditTask { idx: 0, original: String::new(), is_new: true };
+        for (ch, cmd) in [("n", Command::New), ("N", Command::NewChild), ("x", Command::ToggleDone), (" ", Command::ToggleDone),
+                          ("b", Command::ScheduleTask), (">", Command::Indent), ("<", Command::Outdent), ("d", Command::Delete),
+                          ("e", Command::EditTitle), ("t", Command::Today)] {
+            assert_eq!(text_to_command(ch, n), Some(cmd), "{ch}");
+            assert_eq!(text_to_command(ch, et), Some(Command::Text(ch.into())), "{ch}");
+        }
+    }
+
+    #[test]
+    fn pane_and_outline_keys() {
+        let n = &Mode::Normal;
+        assert_eq!(key_to_command(Key::Tab, M::NONE, n), Some(Command::SwitchPane));
+        assert_eq!(key_to_command(Key::ArrowDown, M::COMMAND, n), Some(Command::NextBlock));
+        assert_eq!(key_to_command(Key::ArrowRight, M::ALT, n), Some(Command::Indent));
+        assert_eq!(key_to_command(Key::ArrowLeft, M::ALT, n), Some(Command::Outdent));
+        assert_eq!(key_to_command(Key::Home, M::NONE, n), Some(Command::Home));
+        let mv = &Mode::MoveBlock { idx: 0, grab: 0, target: Slot(0) };
+        assert_eq!(key_to_command(Key::Escape, M::NONE, mv), Some(Command::Cancel));
+        assert_eq!(key_to_command(Key::ArrowDown, M::NONE, mv), None);
     }
 }
