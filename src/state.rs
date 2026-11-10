@@ -155,6 +155,9 @@ impl AppState {
 
     /// Drops a task on the timeline: a one-hour block (clipped by neighbours and the day end).
     pub fn drop_task(&mut self, task_idx: usize, slot: Slot) {
+        if self.mode != Mode::Normal {
+            return;
+        }
         let Some(task) = self.tasks.items().get(task_idx) else { return };
         let title = task.title.clone();
         let Some((start, end)) = self.day.free_range(slot, Slot((slot.0 + 3).min(LAST_SLOT))) else {
@@ -907,16 +910,13 @@ mod tests {
         s.apply(Command::NewChild, D);
         s.apply(Command::Text("Outline".into()), D);
         s.apply(Command::Confirm, D);
-        assert_eq!(s.store.load_tasks().unwrap(), parse_tasks("- [ ] Report
-  - [ ] Outline
-"));
+        assert_eq!(s.store.load_tasks().unwrap(), parse_tasks("- [ ] Report\n  - [ ] Outline\n"));
         assert_eq!(s.selected_task(), Some(1));
     }
 
     #[test]
     fn task_edit_swallows_shortcuts() {
-        let (_t, mut s) = st_tasks("- [ ] a
-");
+        let (_t, mut s) = st_tasks("- [ ] a\n");
         s.apply(Command::EditTitle, D);
         for c in [
             Command::Delete,
@@ -936,10 +936,7 @@ mod tests {
 
     #[test]
     fn delete_parent_removes_subtree_and_undo_restores() {
-        let (_t, mut s) = st_tasks("- [ ] p
-  - [ ] c
-- [ ] q
-");
+        let (_t, mut s) = st_tasks("- [ ] p\n  - [ ] c\n- [ ] q\n");
         s.apply(Command::Delete, D);
         assert_eq!(s.tasks.len(), 1);
         s.apply(Command::Undo, D);
@@ -949,8 +946,7 @@ mod tests {
 
     #[test]
     fn undo_interleaves_tasks_and_blocks() {
-        let (_t, mut s) = st_tasks("- [ ] a
-");
+        let (_t, mut s) = st_tasks("- [ ] a\n");
         s.apply(Command::ToggleDone, D);
         s.apply(Command::SwitchPane, D);
         s.cursor = Slot(10);
@@ -979,8 +975,7 @@ mod tests {
 
     #[test]
     fn refused_indent_sets_status() {
-        let (_t, mut s) = st_tasks("- [ ] a
-");
+        let (_t, mut s) = st_tasks("- [ ] a\n");
         s.apply(Command::Indent, D);
         assert_eq!(s.status, "can't move there");
         s.apply(Command::Undo, D);
@@ -1071,8 +1066,7 @@ mod tests {
 
     #[test]
     fn schedule_task_creates_titled_block() {
-        let (_t, mut s) = st_tasks("- [ ] Write report
-");
+        let (_t, mut s) = st_tasks("- [ ] Write report\n");
         s.cursor = Slot(40);
         s.apply(Command::ScheduleTask, D);
         assert_eq!(s.focus, Focus::Timeline);
@@ -1085,14 +1079,48 @@ mod tests {
 
     #[test]
     fn drop_task_makes_one_hour_block_clipped() {
-        let (_t, mut s) = st_tasks("- [ ] a
-");
+        let (_t, mut s) = st_tasks("- [ ] a\n");
         s.day
             .add(Block { start: Slot(42), end: Slot(44), kind: Kind::Deep, title: String::new() })
             .unwrap();
         s.drop_task(0, Slot(40));
-        assert_eq!(s.day.block_at(Slot(40)).map(|i| s.day.blocks()[i].end), Some(Slot(42)));
+        let i = s.day.block_at(Slot(40)).unwrap();
+        assert_eq!((s.day.blocks()[i].end, s.day.blocks()[i].title.as_str()), (Slot(42), "a"));
+        assert_eq!((s.cursor, s.focus), (Slot(40), Focus::Timeline));
+        assert_eq!(s.day.blocks().len(), 2);
         s.drop_task(0, Slot(43));
         assert_eq!(s.status, "slot occupied");
+        assert_eq!(s.day.blocks().len(), 2);
+    }
+
+    #[test]
+    fn drop_task_clamps_at_day_end() {
+        let (_t, mut s) = st_tasks("- [ ] a\n");
+        s.drop_task(0, Slot(95));
+        assert_eq!((s.day.blocks()[0].start, s.day.blocks()[0].end), (Slot(95), Slot(96)));
+    }
+
+    #[test]
+    fn drop_task_ignored_outside_normal_mode() {
+        let (_t, mut s) = st_tasks("- [ ] a\n");
+        s.apply(Command::New, D);
+        s.drop_task(0, Slot(40));
+        assert!(s.day.blocks().is_empty());
+        s.apply(Command::Cancel, D);
+        assert_eq!(s.tasks.len(), 1);
+        assert_eq!(s.mode, Mode::Normal);
+    }
+
+    #[test]
+    fn schedule_task_on_occupied_slot_refuses() {
+        let (_t, mut s) = st_tasks("- [ ] a\n");
+        s.day
+            .add(Block { start: Slot(40), end: Slot(42), kind: Kind::Deep, title: String::new() })
+            .unwrap();
+        s.cursor = Slot(40);
+        s.apply(Command::ScheduleTask, D);
+        assert_eq!(s.status, "slot occupied");
+        assert_eq!(s.focus, Focus::Timeline);
+        assert_eq!(s.mode, Mode::Normal);
     }
 }
