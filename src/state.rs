@@ -10,7 +10,7 @@ use crate::theme::{theme_index, themes};
 
 const HISTORY_CAP: usize = 100;
 const LAST_SLOT: u16 = SLOTS_PER_DAY - 1;
-const START_OF_WORKDAY: Slot = Slot(36); // 09:00
+const START_SLOT: Slot = Slot(32); // 08:00
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum Focus {
@@ -103,7 +103,7 @@ impl AppState {
             store,
             date: today,
             day: Day::default(),
-            cursor: START_OF_WORKDAY,
+            cursor: START_SLOT,
             mode: Mode::Normal,
             theme,
             title_buf: String::new(),
@@ -142,6 +142,40 @@ impl AppState {
         }
     }
 
+    /// While dragging a block: where it would land, as `(start, end)`.
+    pub fn move_preview(&self) -> Option<(Slot, Slot)> {
+        match self.mode {
+            Mode::MoveBlock { idx, target, .. } => {
+                let b = &self.day.blocks()[idx];
+                Some((target, Slot(target.0 + (b.end.0 - b.start.0))))
+            }
+            _ => None,
+        }
+    }
+
+    /// Drops a task on the timeline: a one-hour block (clipped by neighbours and the day end).
+    pub fn drop_task(&mut self, task_idx: usize, slot: Slot) {
+        let Some(task) = self.tasks.items().get(task_idx) else { return };
+        let title = task.title.clone();
+        let Some((start, end)) = self.day.free_range(slot, Slot((slot.0 + 3).min(LAST_SLOT))) else {
+            self.status = "slot occupied".into();
+            return;
+        };
+        self.checkpoint();
+        let block = Block { start, end, kind: Kind::Standard, title };
+        match self.day.add(block) {
+            Ok(_) => {
+                self.cursor = start;
+                self.focus = Focus::Timeline;
+                self.save();
+            }
+            Err(_) => {
+                self.history.pop();
+                self.status = "slot occupied".into();
+            }
+        }
+    }
+
     pub fn save(&mut self) {
         if self.load_failed {
             self.status = format!("not saving: {} could not be read", self.date);
@@ -166,21 +200,43 @@ impl AppState {
         if self.mode != Mode::Normal {
             return;
         }
+        self.focus = Focus::Timeline;
         self.cursor = clamp_cursor(slot.0 as i32);
-        if self.selected().is_none() {
-            self.mode = Mode::Create { anchor: self.cursor, title: None };
-        }
+        self.mode = match self.selected() {
+            None => Mode::Create { anchor: self.cursor, title: None },
+            Some(idx) => {
+                let start = self.day.blocks()[idx].start;
+                Mode::MoveBlock { idx, grab: self.cursor.0 - start.0, target: start }
+            }
+        };
     }
 
     pub fn drag_update(&mut self, slot: Slot) {
-        if matches!(self.mode, Mode::Create { .. }) {
-            self.cursor = clamp_cursor(slot.0 as i32);
+        match &mut self.mode {
+            Mode::Create { .. } => self.cursor = clamp_cursor(slot.0 as i32),
+            Mode::MoveBlock { idx, grab, target } => {
+                let b = &self.day.blocks()[*idx];
+                let len = (b.end.0 - b.start.0) as i32;
+                let max = SLOTS_PER_DAY as i32 - len;
+                *target = Slot((slot.0 as i32 - *grab as i32).clamp(0, max) as u16);
+            }
+            _ => {}
         }
     }
 
     pub fn drag_end(&mut self) {
-        if matches!(self.mode, Mode::Create { .. }) {
-            self.confirm_create();
+        match self.mode {
+            Mode::Create { .. } => self.confirm_create(),
+            Mode::MoveBlock { idx, target, .. } => {
+                self.mode = Mode::Normal;
+                let start = self.day.blocks()[idx].start;
+                if target != start {
+                    self.cursor = start;
+                    let delta = target.0 as i32 - start.0 as i32;
+                    self.edit(|d, i| d.shift(i, delta));
+                }
+            }
+            _ => {}
         }
     }
 
@@ -243,7 +299,6 @@ impl AppState {
                 }
                 _ => {}
             },
-            // Drag-move behavior arrives with the move-mode task.
             Mode::MoveBlock { .. } => {
                 if cmd == Command::Cancel {
                     self.mode = Mode::Normal;
@@ -324,6 +379,16 @@ impl AppState {
                 self.task_sel = idx;
                 self.title_buf.clear();
                 self.mode = Mode::EditTask { idx, original: String::new(), is_new: true };
+            }
+            Command::ScheduleTask => {
+                let Some(idx) = self.selected_task() else { return };
+                self.focus = Focus::Timeline;
+                if self.selected().is_some() {
+                    self.status = "slot occupied".into();
+                    return;
+                }
+                let title = self.tasks.items()[idx].title.clone();
+                self.mode = Mode::Create { anchor: self.cursor, title: Some(title) };
             }
             Command::EditTitle => {
                 let Some(idx) = self.selected_task() else { return };
@@ -450,15 +515,22 @@ impl AppState {
 
     fn confirm_create(&mut self) {
         let range = self.pending_range();
+        let preset = match &self.mode {
+            Mode::Create { title, .. } => title.clone(),
+            _ => None,
+        };
         self.mode = Mode::Normal;
         let Some((start, end)) = range else { return };
         self.checkpoint();
-        let block = Block { start, end, kind: Kind::Standard, title: String::new() };
+        let block =
+            Block { start, end, kind: Kind::Standard, title: preset.clone().unwrap_or_default() };
         match self.day.add(block) {
             Ok(idx) => {
                 self.cursor = start;
-                self.title_buf.clear();
-                self.mode = Mode::EditTitle { idx, original: String::new(), is_new: true };
+                if preset.is_none() {
+                    self.title_buf.clear();
+                    self.mode = Mode::EditTitle { idx, original: String::new(), is_new: true };
+                }
                 self.save();
             }
             Err(_) => {
@@ -939,5 +1011,88 @@ mod tests {
         s.apply(Command::Confirm, D);
         assert!(s.status.starts_with("not saving"), "{}", s.status);
         assert_eq!(std::fs::read(&file).unwrap(), bytes);
+    }
+
+    #[test]
+    fn starts_at_eight() {
+        let (_t, s) = st();
+        assert_eq!(s.cursor, Slot(32));
+        assert_eq!(s.focus, Focus::Timeline);
+    }
+
+    #[test]
+    fn drag_moves_block() {
+        let (_t, mut s) = st_with_block(36, 40);
+        s.drag_start(Slot(37));
+        s.drag_update(Slot(45));
+        assert_eq!(s.move_preview(), Some((Slot(44), Slot(48))));
+        s.drag_end();
+        assert_eq!((s.day.blocks()[0].start, s.day.blocks()[0].end), (Slot(44), Slot(48)));
+        assert_eq!(s.store.load_day(D).unwrap(), s.day);
+        s.apply(Command::Undo, D);
+        assert_eq!(s.day.blocks()[0].start, Slot(36));
+    }
+
+    #[test]
+    fn drag_move_refuses_overlap() {
+        let (_t, mut s) = st_with_block(36, 40);
+        s.day
+            .add(Block { start: Slot(50), end: Slot(52), kind: Kind::Deep, title: String::new() })
+            .unwrap();
+        s.drag_start(Slot(36));
+        s.drag_update(Slot(49));
+        s.drag_end();
+        assert_eq!(s.status, "overlaps another block");
+        assert_eq!(s.day.blocks()[0].start, Slot(36));
+        assert_eq!(s.mode, Mode::Normal);
+    }
+
+    #[test]
+    fn drag_move_clamps_to_day() {
+        let (_t, mut s) = st_with_block(36, 40);
+        s.drag_start(Slot(36));
+        s.drag_update(Slot(95));
+        assert_eq!(s.move_preview(), Some((Slot(92), Slot(96))));
+        s.drag_update(Slot(0));
+        s.drag_start(Slot(0));
+        assert_eq!(s.move_preview(), Some((Slot(0), Slot(4))));
+    }
+
+    #[test]
+    fn escape_cancels_move() {
+        let (_t, mut s) = st_with_block(36, 40);
+        s.drag_start(Slot(36));
+        s.drag_update(Slot(50));
+        s.apply(Command::Cancel, D);
+        assert_eq!(s.mode, Mode::Normal);
+        assert_eq!(s.day.blocks()[0].start, Slot(36));
+        assert_eq!(s.move_preview(), None);
+    }
+
+    #[test]
+    fn schedule_task_creates_titled_block() {
+        let (_t, mut s) = st_tasks("- [ ] Write report
+");
+        s.cursor = Slot(40);
+        s.apply(Command::ScheduleTask, D);
+        assert_eq!(s.focus, Focus::Timeline);
+        s.apply(Command::Down, D);
+        s.apply(Command::Confirm, D);
+        assert_eq!(s.mode, Mode::Normal);
+        let b = &s.day.blocks()[0];
+        assert_eq!((b.start, b.end, b.title.as_str()), (Slot(40), Slot(42), "Write report"));
+    }
+
+    #[test]
+    fn drop_task_makes_one_hour_block_clipped() {
+        let (_t, mut s) = st_tasks("- [ ] a
+");
+        s.day
+            .add(Block { start: Slot(42), end: Slot(44), kind: Kind::Deep, title: String::new() })
+            .unwrap();
+        s.drop_task(0, Slot(40));
+        assert_eq!(s.day.block_at(Slot(40)).map(|i| s.day.blocks()[i].end), Some(Slot(42)));
+        s.drop_task(0, Slot(43));
+        assert_eq!(s.status, "slot occupied");
     }
 }
