@@ -61,7 +61,8 @@ pub fn status_bar(ui: &mut egui::Ui, state: &AppState, theme: &Theme) {
             let mode = match state.mode {
                 Mode::Normal => "NORMAL",
                 Mode::Create { .. } => "CREATE",
-                Mode::EditTitle { .. } => "EDIT",
+                Mode::EditTitle { .. } | Mode::EditTask { .. } => "EDIT",
+                Mode::MoveBlock { .. } => "MOVE",
                 Mode::ThemePicker { .. } => "THEME",
                 Mode::Help => "HELP",
             };

@@ -41,7 +41,7 @@ pub fn key_to_command(key: Key, m: Modifiers, mode: &Mode) -> Option<Command> {
             Key::Enter | Key::F2 if plain => C::EditTitle,
             Key::Delete | Key::Backspace if plain => C::Delete,
             Key::F1 if plain => C::ToggleHelp,
-            Key::N if cmd_only => C::NewBlock,
+            Key::N if cmd_only => C::New,
             Key::Z if cmd_only => C::Undo,
             Key::Z if m.command && m.shift && !m.alt => C::Redo,
             Key::Y if cmd_only => C::Redo,
@@ -57,12 +57,13 @@ pub fn key_to_command(key: Key, m: Modifiers, mode: &Mode) -> Option<Command> {
             Key::Escape => Some(C::Cancel),
             _ => None,
         },
-        Mode::EditTitle { .. } => match key {
+        Mode::EditTitle { .. } | Mode::EditTask { .. } => match key {
             Key::Enter => Some(C::Confirm),
             Key::Escape => Some(C::Cancel),
             Key::Backspace => Some(C::Backspace),
             _ => None,
         },
+        Mode::MoveBlock { .. } => (key == Key::Escape).then_some(C::Cancel),
         Mode::ThemePicker { .. } => match key {
             Key::ArrowUp => Some(C::Up),
             Key::ArrowDown => Some(C::Down),
@@ -77,7 +78,7 @@ pub fn key_to_command(key: Key, m: Modifiers, mode: &Mode) -> Option<Command> {
 /// Maps typed text to a command. In title editing, all text is literal.
 pub fn text_to_command(text: &str, mode: &Mode) -> Option<Command> {
     match mode {
-        Mode::EditTitle { .. } => Some(Command::Text(text.to_string())),
+        Mode::EditTitle { .. } | Mode::EditTask { .. } => Some(Command::Text(text.to_string())),
         Mode::Normal => match text {
             "1" => Some(Command::SetKind(Kind::Standard)),
             "2" => Some(Command::SetKind(Kind::Scheduled)),
@@ -176,7 +177,7 @@ mod tests {
     #[test]
     fn platform_shortcuts() {
         let n = &Mode::Normal;
-        assert_eq!(key_to_command(Key::N, M::COMMAND, n), Some(Command::NewBlock));
+        assert_eq!(key_to_command(Key::N, M::COMMAND, n), Some(Command::New));
         assert_eq!(key_to_command(Key::Z, M::COMMAND, n), Some(Command::Undo));
         assert_eq!(key_to_command(Key::Z, M::COMMAND | M::SHIFT, n), Some(Command::Redo));
         assert_eq!(key_to_command(Key::Y, M::COMMAND, n), Some(Command::Redo));
@@ -199,7 +200,7 @@ mod tests {
 
     #[test]
     fn modal_keys() {
-        let c = &Mode::Create { anchor: crate::model::Slot(0) };
+        let c = &Mode::Create { anchor: crate::model::Slot(0), title: None };
         assert_eq!(key_to_command(Key::ArrowDown, M::SHIFT, c), Some(Command::Down));
         assert_eq!(key_to_command(Key::Enter, M::NONE, c), Some(Command::Confirm));
         assert_eq!(key_to_command(Key::Escape, M::NONE, c), Some(Command::Cancel));
