@@ -194,7 +194,12 @@ mod tests {
             std::fs::write(tmp.path().join("tasks.txt"), tasks_txt).unwrap();
         }
         let date = chrono::NaiveDate::from_ymd_opt(2026, 11, 10).unwrap();
-        let mut state = AppState::new(Store { dir: tmp.path().to_path_buf() }, date);
+        let mut state = AppState::new(
+            Store {
+                dir: tmp.path().to_path_buf(),
+            },
+            date,
+        );
         let theme = &themes()[0];
         let ctx = egui::Context::default();
         let mut widths = Vec::new();
@@ -202,7 +207,10 @@ mod tests {
             let input = egui::RawInput {
                 screen_rect: Some(Rect::from_min_size(egui::Pos2::ZERO, vec2(900.0, 600.0))),
                 // Pointer moving over the right half (the timeline) every frame.
-                events: vec![egui::Event::PointerMoved(egui::pos2(700.0, 100.0 + i as f32))],
+                events: vec![egui::Event::PointerMoved(egui::pos2(
+                    700.0,
+                    100.0 + i as f32,
+                ))],
                 ..Default::default()
             };
             let mut out = ctx.run_ui(input, |ui| widths.push(show(ui, &mut state, theme)));
@@ -216,7 +224,10 @@ mod tests {
         for txt in ["", "- [ ] a\n"] {
             let w = pane_widths(txt, 10);
             assert!((w[0] - 450.0).abs() <= 1.0, "{txt:?}: opened at {}", w[0]);
-            assert!(w.iter().all(|x| (x - w[0]).abs() < 0.5), "{txt:?}: drifted {w:?}");
+            assert!(
+                w.iter().all(|x| (x - w[0]).abs() < 0.5),
+                "{txt:?}: drifted {w:?}"
+            );
         }
     }
 
