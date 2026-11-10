@@ -10,7 +10,7 @@ use crate::theme::{theme_index, themes};
 
 const HISTORY_CAP: usize = 100;
 const LAST_SLOT: u16 = SLOTS_PER_DAY - 1;
-const START_SLOT: Slot = Slot(32); // 08:00
+pub const START_SLOT: Slot = Slot(32); // 08:00
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum Focus {

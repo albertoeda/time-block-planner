@@ -33,6 +33,18 @@ impl Theme {
             Kind::Deep => self.deep,
         }
     }
+
+    /// Opaque block body color: 75% of the kind color over 25% of the background.
+    pub fn block_fill(&self, k: Kind) -> Rgb {
+        let (a, b) = (self.kind_color(k), self.bg);
+        let m = |x: u8, y: u8| (0.75 * x as f32 + 0.25 * y as f32).round() as u8;
+        Rgb(m(a.0, b.0), m(a.1, b.1), m(a.2, b.2))
+    }
+
+    /// Whichever of `fg`/`bg` reads better on `fill` (higher WCAG contrast).
+    pub fn text_on(&self, fill: Rgb) -> Rgb {
+        if contrast(self.fg, fill) >= contrast(self.bg, fill) { self.fg } else { self.bg }
+    }
 }
 
 macro_rules! sources {
@@ -131,12 +143,18 @@ fn mix(a: Rgb, b: Rgb) -> Rgb {
 }
 
 /// WCAG relative luminance, 0.0 (black) ..= 1.0 (white).
-fn luminance(c: Rgb) -> f32 {
+pub fn luminance(c: Rgb) -> f32 {
     let lin = |v: u8| {
         let s = v as f32 / 255.0;
         if s <= 0.04045 { s / 12.92 } else { ((s + 0.055) / 1.055).powf(2.4) }
     };
     0.2126 * lin(c.0) + 0.7152 * lin(c.1) + 0.0722 * lin(c.2)
+}
+
+/// WCAG contrast ratio between two colors, lighter over darker, so always >= 1.
+pub(crate) fn contrast(a: Rgb, b: Rgb) -> f32 {
+    let (la, lb) = (luminance(a), luminance(b));
+    (la.max(lb) + 0.05) / (la.min(lb) + 0.05)
 }
 
 #[cfg(test)]
@@ -214,6 +232,25 @@ mod tests {
         }
         for n in ["tokyo-night", "gruvbox", "vantablack"] {
             assert!(!themes()[theme_index(n)].is_light, "{n}");
+        }
+    }
+
+    #[test]
+    fn block_fill_is_opaque_mix() {
+        let t = &themes()[theme_index("gruvbox")];
+        // Per channel (0.75 * a + 0.25 * b).round(): a9b665 over 282828.
+        assert_eq!(t.block_fill(Kind::Deep), Rgb(0x89, 0x93, 0x56));
+    }
+
+    #[test]
+    fn text_on_picks_contrast() {
+        for t in themes() {
+            for k in [Kind::Standard, Kind::Scheduled, Kind::Deep] {
+                let f = t.block_fill(k);
+                let x = t.text_on(f);
+                let other = if x == t.fg { t.bg } else { t.fg };
+                assert!(contrast(x, f) >= contrast(other, f), "{} {:?}", t.name, k);
+            }
         }
     }
 

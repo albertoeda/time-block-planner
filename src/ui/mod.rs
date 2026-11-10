@@ -162,8 +162,13 @@ impl eframe::App for PlannerApp {
         chrome::header(ui, &self.state, theme, today);
         chrome::status_bar(ui, &self.state, theme);
 
+        // First frame: open with START_SLOT (08:00) at the top; afterwards follow the cursor.
         let target = (self.state.date, self.state.cursor);
-        let scroll = self.scrolled_to != Some(target);
+        let scroll = match self.scrolled_to {
+            None => timeline::Scroll::Start,
+            Some(t) if t != target => timeline::Scroll::Cursor,
+            Some(_) => timeline::Scroll::None,
+        };
         self.scrolled_to = Some(target);
         timeline::show(ui, &mut self.state, theme, scroll);
 
