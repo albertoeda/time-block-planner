@@ -25,15 +25,19 @@ pub fn task_row_text(task: &Task) -> (String, String) {
     (prefix, title)
 }
 
-pub fn show(ui: &mut egui::Ui, state: &mut AppState, theme: &Theme) {
+/// Draws the tasks pane and returns its outer width.
+pub fn show(ui: &mut egui::Ui, state: &mut AppState, theme: &Theme) -> f32 {
     let frame = egui::Frame::NONE
         .fill(color(theme.bg))
         .inner_margin(egui::Margin::symmetric(8, 4));
-    egui::Panel::left("tasks")
+    let width = egui::Panel::left("tasks")
         .resizable(true)
-        .default_size(320.0)
+        .default_size((ui.available_width() / 2.0).round())
         .frame(frame)
         .show(ui, |ui| {
+            // Fill the pane so its width never follows the content (a truncated header
+            // would otherwise shrink the pane a little on every repaint).
+            ui.set_min_width(ui.available_width());
             let head = if state.focus == Focus::Tasks {
                 theme.accent
             } else {
@@ -48,8 +52,12 @@ pub fn show(ui: &mut egui::Ui, state: &mut AppState, theme: &Theme) {
             egui::ScrollArea::vertical()
                 .auto_shrink(false)
                 .show(ui, |ui| draw(ui, state, theme));
-        });
+        })
+        .response
+        .rect
+        .width();
     drag_ghost(ui.ctx(), theme);
+    width
 }
 
 fn draw(ui: &mut egui::Ui, state: &mut AppState, theme: &Theme) {
@@ -175,7 +183,42 @@ fn drag_ghost(ctx: &egui::Context, theme: &Theme) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::storage::Store;
     use crate::tasks::Task;
+    use crate::theme::themes;
+
+    /// Runs the tasks pane for `frames` frames on a 900x600 screen; returns its width per frame.
+    fn pane_widths(tasks_txt: &str, frames: usize) -> Vec<f32> {
+        let tmp = tempfile::tempdir().unwrap();
+        if !tasks_txt.is_empty() {
+            std::fs::write(tmp.path().join("tasks.txt"), tasks_txt).unwrap();
+        }
+        let date = chrono::NaiveDate::from_ymd_opt(2026, 11, 10).unwrap();
+        let mut state = AppState::new(Store { dir: tmp.path().to_path_buf() }, date);
+        let theme = &themes()[0];
+        let ctx = egui::Context::default();
+        let mut widths = Vec::new();
+        for i in 0..frames {
+            let input = egui::RawInput {
+                screen_rect: Some(Rect::from_min_size(egui::Pos2::ZERO, vec2(900.0, 600.0))),
+                // Pointer moving over the right half (the timeline) every frame.
+                events: vec![egui::Event::PointerMoved(egui::pos2(700.0, 100.0 + i as f32))],
+                ..Default::default()
+            };
+            let mut out = ctx.run_ui(input, |ui| widths.push(show(ui, &mut state, theme)));
+            out.textures_delta.clear();
+        }
+        widths
+    }
+
+    #[test]
+    fn pane_opens_at_half_width_and_stays_put() {
+        for txt in ["", "- [ ] a\n"] {
+            let w = pane_widths(txt, 10);
+            assert!((w[0] - 450.0).abs() <= 1.0, "{txt:?}: opened at {}", w[0]);
+            assert!(w.iter().all(|x| (x - w[0]).abs() < 0.5), "{txt:?}: drifted {w:?}");
+        }
+    }
 
     #[test]
     fn row_text_indents_and_marks() {
