@@ -1,0 +1,224 @@
+//! eframe/egui front end: maps input to `Command`s and draws `AppState` in a terminal style.
+
+pub mod chrome;
+pub mod timeline;
+
+use chrono::{Local, NaiveDate};
+use egui::{Event, FontFamily, Key, Modifiers, TextStyle};
+
+use crate::model::{Kind, Slot};
+use crate::state::{AppState, Command, Mode};
+use crate::storage::Store;
+use crate::theme::themes;
+
+/// Maps a non-text key press to a command for the given mode (see the plan's Keymap).
+/// `Ctrl` here is `Modifiers::command`, i.e. Cmd on macOS.
+pub fn key_to_command(key: Key, m: Modifiers, mode: &Mode) -> Option<Command> {
+    use Command as C;
+    let plain = !m.command && !m.alt && !m.shift;
+    let cmd_only = m.command && !m.alt && !m.shift;
+    let arrows_only = !m.command && !m.alt;
+    match mode {
+        Mode::Normal => Some(match key {
+            Key::ArrowUp | Key::ArrowDown => {
+                let up = key == Key::ArrowUp;
+                match (m.command, m.alt, m.shift) {
+                    (true, false, false) => if up { C::Home } else { C::End },
+                    (false, true, true) => if up { C::Shrink } else { C::Grow },
+                    (false, true, false) => if up { C::MoveUp } else { C::MoveDown },
+                    (false, false, true) => if up { C::ExtendUp } else { C::ExtendDown },
+                    (false, false, false) => if up { C::Up } else { C::Down },
+                    _ => return None,
+                }
+            }
+            Key::ArrowLeft if plain => C::PrevDay,
+            Key::ArrowRight if plain => C::NextDay,
+            Key::PageUp if plain => C::PageUp,
+            Key::PageDown if plain => C::PageDown,
+            Key::Home if plain => C::Home,
+            Key::End if plain => C::End,
+            Key::Tab if !m.command && !m.alt => if m.shift { C::PrevBlock } else { C::NextBlock },
+            Key::Enter | Key::F2 if plain => C::EditTitle,
+            Key::Delete | Key::Backspace if plain => C::Delete,
+            Key::F1 if plain => C::ToggleHelp,
+            Key::N if cmd_only => C::NewBlock,
+            Key::Z if cmd_only => C::Undo,
+            Key::Z if m.command && m.shift && !m.alt => C::Redo,
+            Key::Y if cmd_only => C::Redo,
+            Key::T if cmd_only => C::Today,
+            Key::S if cmd_only => C::SaveNow,
+            Key::Comma if cmd_only => C::OpenThemes,
+            _ => return None,
+        }),
+        Mode::Create { .. } => match key {
+            Key::ArrowUp if arrows_only => Some(C::Up),
+            Key::ArrowDown if arrows_only => Some(C::Down),
+            Key::Enter => Some(C::Confirm),
+            Key::Escape => Some(C::Cancel),
+            _ => None,
+        },
+        Mode::EditTitle { .. } => match key {
+            Key::Enter => Some(C::Confirm),
+            Key::Escape => Some(C::Cancel),
+            Key::Backspace => Some(C::Backspace),
+            _ => None,
+        },
+        Mode::ThemePicker { .. } => match key {
+            Key::ArrowUp => Some(C::Up),
+            Key::ArrowDown => Some(C::Down),
+            Key::Enter => Some(C::Confirm),
+            Key::Escape => Some(C::Cancel),
+            _ => None,
+        },
+        Mode::Help => matches!(key, Key::Escape | Key::F1).then_some(C::ToggleHelp),
+    }
+}
+
+/// Maps typed text to a command. In title editing, all text is literal.
+pub fn text_to_command(text: &str, mode: &Mode) -> Option<Command> {
+    match mode {
+        Mode::EditTitle { .. } => Some(Command::Text(text.to_string())),
+        Mode::Normal => match text {
+            "1" => Some(Command::SetKind(Kind::Standard)),
+            "2" => Some(Command::SetKind(Kind::Scheduled)),
+            "3" => Some(Command::SetKind(Kind::Deep)),
+            "?" => Some(Command::ToggleHelp),
+            _ => None,
+        },
+        Mode::Help => (text == "?").then_some(Command::ToggleHelp),
+        _ => None,
+    }
+}
+
+pub struct PlannerApp {
+    state: AppState,
+    applied_theme: Option<usize>,
+    /// Cursor position last scrolled to; scroll only when it changes so the wheel still works.
+    scrolled_to: Option<(NaiveDate, Slot)>,
+}
+
+impl PlannerApp {
+    pub fn new(cc: &eframe::CreationContext<'_>, store: Store) -> PlannerApp {
+        cc.egui_ctx.all_styles_mut(|style| {
+            for font in style.text_styles.values_mut() {
+                font.family = FontFamily::Monospace;
+            }
+            if let Some(body) = style.text_styles.get_mut(&TextStyle::Monospace) {
+                body.size = 15.0;
+            }
+        });
+        PlannerApp { state: AppState::new(store, today()), applied_theme: None, scrolled_to: None }
+    }
+
+    fn handle_input(&mut self, ctx: &egui::Context) {
+        let events = ctx.input(|i| i.events.clone());
+        for event in events {
+            let cmd = match &event {
+                Event::Key { key: Key::Q, pressed: true, modifiers, .. } if modifiers.command => {
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                    None
+                }
+                Event::Key { key, pressed: true, modifiers, .. } => {
+                    key_to_command(*key, *modifiers, &self.state.mode)
+                }
+                Event::Text(t) => text_to_command(t, &self.state.mode),
+                _ => None,
+            };
+            if let Some(cmd) = cmd {
+                self.state.apply(cmd, today());
+            }
+        }
+        // We own the keyboard: keep egui from using Tab/arrows for focus or scrolling.
+        ctx.input_mut(|i| i.events.retain(|e| !matches!(e, Event::Key { .. } | Event::Text(_))));
+    }
+}
+
+impl eframe::App for PlannerApp {
+    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        let ctx = ui.ctx().clone();
+        self.handle_input(&ctx);
+
+        if self.applied_theme != Some(self.state.theme) {
+            let v = chrome::visuals(&themes()[self.state.theme]);
+            ctx.set_visuals_of(egui::Theme::Dark, v.clone());
+            ctx.set_visuals_of(egui::Theme::Light, v);
+            self.applied_theme = Some(self.state.theme);
+        }
+        let theme = &themes()[self.state.theme];
+
+        let today = today();
+        chrome::header(ui, &self.state, theme, today);
+        chrome::status_bar(ui, &self.state, theme);
+
+        let target = (self.state.date, self.state.cursor);
+        let scroll = self.scrolled_to != Some(target);
+        self.scrolled_to = Some(target);
+        timeline::show(ui, &mut self.state, theme, scroll);
+
+        match self.state.mode {
+            Mode::Help => chrome::help_overlay(&ctx, theme),
+            Mode::ThemePicker { .. } => chrome::theme_picker(&ctx, &self.state, theme),
+            _ => {}
+        }
+    }
+}
+
+fn today() -> NaiveDate {
+    Local::now().date_naive()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::model::Kind;
+    use egui::{Key, Modifiers as M};
+
+    #[test]
+    fn platform_shortcuts() {
+        let n = &Mode::Normal;
+        assert_eq!(key_to_command(Key::N, M::COMMAND, n), Some(Command::NewBlock));
+        assert_eq!(key_to_command(Key::Z, M::COMMAND, n), Some(Command::Undo));
+        assert_eq!(key_to_command(Key::Z, M::COMMAND | M::SHIFT, n), Some(Command::Redo));
+        assert_eq!(key_to_command(Key::Y, M::COMMAND, n), Some(Command::Redo));
+        assert_eq!(key_to_command(Key::T, M::COMMAND, n), Some(Command::Today));
+        assert_eq!(key_to_command(Key::S, M::COMMAND, n), Some(Command::SaveNow));
+        assert_eq!(key_to_command(Key::Comma, M::COMMAND, n), Some(Command::OpenThemes));
+        assert_eq!(key_to_command(Key::F2, M::NONE, n), Some(Command::EditTitle));
+        assert_eq!(key_to_command(Key::Enter, M::NONE, n), Some(Command::EditTitle));
+        assert_eq!(key_to_command(Key::F1, M::NONE, n), Some(Command::ToggleHelp));
+        assert_eq!(key_to_command(Key::ArrowDown, M::ALT, n), Some(Command::MoveDown));
+        assert_eq!(key_to_command(Key::ArrowDown, M::ALT | M::SHIFT, n), Some(Command::Grow));
+        assert_eq!(key_to_command(Key::ArrowUp, M::ALT | M::SHIFT, n), Some(Command::Shrink));
+        assert_eq!(key_to_command(Key::ArrowDown, M::SHIFT, n), Some(Command::ExtendDown));
+        assert_eq!(key_to_command(Key::ArrowUp, M::COMMAND, n), Some(Command::Home));
+        assert_eq!(key_to_command(Key::ArrowRight, M::NONE, n), Some(Command::NextDay));
+        assert_eq!(key_to_command(Key::Tab, M::SHIFT, n), Some(Command::PrevBlock));
+        assert_eq!(key_to_command(Key::Delete, M::NONE, n), Some(Command::Delete));
+        assert_eq!(key_to_command(Key::N, M::NONE, n), None);
+    }
+
+    #[test]
+    fn modal_keys() {
+        let c = &Mode::Create { anchor: crate::model::Slot(0) };
+        assert_eq!(key_to_command(Key::ArrowDown, M::SHIFT, c), Some(Command::Down));
+        assert_eq!(key_to_command(Key::Enter, M::NONE, c), Some(Command::Confirm));
+        assert_eq!(key_to_command(Key::Escape, M::NONE, c), Some(Command::Cancel));
+        let t = &Mode::ThemePicker { original: 0 };
+        assert_eq!(key_to_command(Key::ArrowUp, M::NONE, t), Some(Command::Up));
+        assert_eq!(key_to_command(Key::Escape, M::NONE, &Mode::Help), Some(Command::ToggleHelp));
+        assert_eq!(text_to_command("?", &Mode::Help), Some(Command::ToggleHelp));
+    }
+
+    #[test]
+    fn backspace_maps_by_mode() {
+        let e = Mode::EditTitle { idx: 0, original: String::new(), is_new: false };
+        assert_eq!(key_to_command(Key::Backspace, M::NONE, &Mode::Normal), Some(Command::Delete));
+        assert_eq!(key_to_command(Key::Backspace, M::NONE, &e), Some(Command::Backspace));
+        assert_eq!(key_to_command(Key::ArrowLeft, M::NONE, &e), None);
+        assert_eq!(text_to_command("1", &e), Some(Command::Text("1".into())));
+        assert_eq!(text_to_command("1", &Mode::Normal), Some(Command::SetKind(Kind::Standard)));
+        assert_eq!(text_to_command("3", &Mode::Normal), Some(Command::SetKind(Kind::Deep)));
+        assert_eq!(text_to_command("?", &e), Some(Command::Text("?".into())));
+        assert_eq!(text_to_command("x", &Mode::Normal), None);
+    }
+}

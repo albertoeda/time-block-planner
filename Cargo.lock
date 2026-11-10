@@ -3210,6 +3210,7 @@ dependencies = [
  "chrono",
  "dirs",
  "eframe",
+ "egui",
  "tempfile",
 ]
 
