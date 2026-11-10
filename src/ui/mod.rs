@@ -24,11 +24,41 @@ pub fn key_to_command(key: Key, m: Modifiers, mode: &Mode) -> Option<Command> {
             Key::ArrowUp | Key::ArrowDown => {
                 let up = key == Key::ArrowUp;
                 match (m.command, m.alt, m.shift) {
-                    (true, false, false) => if up { C::PrevBlock } else { C::NextBlock },
-                    (false, true, true) => if up { C::Shrink } else { C::Grow },
-                    (false, true, false) => if up { C::MoveUp } else { C::MoveDown },
-                    (false, false, true) => if up { C::ExtendUp } else { C::ExtendDown },
-                    (false, false, false) => if up { C::Up } else { C::Down },
+                    (true, false, false) => {
+                        if up {
+                            C::PrevBlock
+                        } else {
+                            C::NextBlock
+                        }
+                    }
+                    (false, true, true) => {
+                        if up {
+                            C::Shrink
+                        } else {
+                            C::Grow
+                        }
+                    }
+                    (false, true, false) => {
+                        if up {
+                            C::MoveUp
+                        } else {
+                            C::MoveDown
+                        }
+                    }
+                    (false, false, true) => {
+                        if up {
+                            C::ExtendUp
+                        } else {
+                            C::ExtendDown
+                        }
+                    }
+                    (false, false, false) => {
+                        if up {
+                            C::Up
+                        } else {
+                            C::Down
+                        }
+                    }
                     _ => return None,
                 }
             }
@@ -120,20 +150,32 @@ impl PlannerApp {
                 body.size = 15.0;
             }
         });
-        PlannerApp { state: AppState::new(store, today()), applied_theme: None, scrolled_to: None }
+        PlannerApp {
+            state: AppState::new(store, today()),
+            applied_theme: None,
+            scrolled_to: None,
+        }
     }
 
     fn handle_input(&mut self, ctx: &egui::Context) {
         let events = ctx.input(|i| i.events.clone());
         for event in events {
             let cmd = match &event {
-                Event::Key { key: Key::Q, pressed: true, modifiers, .. } if modifiers.command => {
+                Event::Key {
+                    key: Key::Q,
+                    pressed: true,
+                    modifiers,
+                    ..
+                } if modifiers.command => {
                     ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                     None
                 }
-                Event::Key { key, pressed: true, modifiers, .. } => {
-                    key_to_command(*key, *modifiers, &self.state.mode)
-                }
+                Event::Key {
+                    key,
+                    pressed: true,
+                    modifiers,
+                    ..
+                } => key_to_command(*key, *modifiers, &self.state.mode),
                 Event::Text(t) => text_to_command(t, &self.state.mode),
                 _ => None,
             };
@@ -142,7 +184,10 @@ impl PlannerApp {
             }
         }
         // We own the keyboard: keep egui from using Tab/arrows for focus or scrolling.
-        ctx.input_mut(|i| i.events.retain(|e| !matches!(e, Event::Key { .. } | Event::Text(_))));
+        ctx.input_mut(|i| {
+            i.events
+                .retain(|e| !matches!(e, Event::Key { .. } | Event::Text(_)))
+        });
     }
 }
 
@@ -197,46 +242,119 @@ mod tests {
         let n = &Mode::Normal;
         assert_eq!(key_to_command(Key::N, M::COMMAND, n), Some(Command::New));
         assert_eq!(key_to_command(Key::Z, M::COMMAND, n), Some(Command::Undo));
-        assert_eq!(key_to_command(Key::Z, M::COMMAND | M::SHIFT, n), Some(Command::Redo));
+        assert_eq!(
+            key_to_command(Key::Z, M::COMMAND | M::SHIFT, n),
+            Some(Command::Redo)
+        );
         assert_eq!(key_to_command(Key::Y, M::COMMAND, n), Some(Command::Redo));
         assert_eq!(key_to_command(Key::T, M::COMMAND, n), Some(Command::Today));
-        assert_eq!(key_to_command(Key::S, M::COMMAND, n), Some(Command::SaveNow));
-        assert_eq!(key_to_command(Key::Comma, M::COMMAND, n), Some(Command::OpenThemes));
-        assert_eq!(key_to_command(Key::F2, M::NONE, n), Some(Command::EditTitle));
-        assert_eq!(key_to_command(Key::Enter, M::NONE, n), Some(Command::EditTitle));
-        assert_eq!(key_to_command(Key::F1, M::NONE, n), Some(Command::ToggleHelp));
-        assert_eq!(key_to_command(Key::ArrowDown, M::ALT, n), Some(Command::MoveDown));
-        assert_eq!(key_to_command(Key::ArrowDown, M::ALT | M::SHIFT, n), Some(Command::Grow));
-        assert_eq!(key_to_command(Key::ArrowUp, M::ALT | M::SHIFT, n), Some(Command::Shrink));
-        assert_eq!(key_to_command(Key::ArrowDown, M::SHIFT, n), Some(Command::ExtendDown));
-        assert_eq!(key_to_command(Key::ArrowUp, M::COMMAND, n), Some(Command::PrevBlock));
-        assert_eq!(key_to_command(Key::ArrowRight, M::NONE, n), Some(Command::NextDay));
-        assert_eq!(key_to_command(Key::Tab, M::SHIFT, n), Some(Command::SwitchPane));
-        assert_eq!(key_to_command(Key::Delete, M::NONE, n), Some(Command::Delete));
+        assert_eq!(
+            key_to_command(Key::S, M::COMMAND, n),
+            Some(Command::SaveNow)
+        );
+        assert_eq!(
+            key_to_command(Key::Comma, M::COMMAND, n),
+            Some(Command::OpenThemes)
+        );
+        assert_eq!(
+            key_to_command(Key::F2, M::NONE, n),
+            Some(Command::EditTitle)
+        );
+        assert_eq!(
+            key_to_command(Key::Enter, M::NONE, n),
+            Some(Command::EditTitle)
+        );
+        assert_eq!(
+            key_to_command(Key::F1, M::NONE, n),
+            Some(Command::ToggleHelp)
+        );
+        assert_eq!(
+            key_to_command(Key::ArrowDown, M::ALT, n),
+            Some(Command::MoveDown)
+        );
+        assert_eq!(
+            key_to_command(Key::ArrowDown, M::ALT | M::SHIFT, n),
+            Some(Command::Grow)
+        );
+        assert_eq!(
+            key_to_command(Key::ArrowUp, M::ALT | M::SHIFT, n),
+            Some(Command::Shrink)
+        );
+        assert_eq!(
+            key_to_command(Key::ArrowDown, M::SHIFT, n),
+            Some(Command::ExtendDown)
+        );
+        assert_eq!(
+            key_to_command(Key::ArrowUp, M::COMMAND, n),
+            Some(Command::PrevBlock)
+        );
+        assert_eq!(
+            key_to_command(Key::ArrowRight, M::NONE, n),
+            Some(Command::NextDay)
+        );
+        assert_eq!(
+            key_to_command(Key::Tab, M::SHIFT, n),
+            Some(Command::SwitchPane)
+        );
+        assert_eq!(
+            key_to_command(Key::Delete, M::NONE, n),
+            Some(Command::Delete)
+        );
         assert_eq!(key_to_command(Key::N, M::NONE, n), None);
     }
 
     #[test]
     fn modal_keys() {
-        let c = &Mode::Create { anchor: crate::model::Slot(0), title: None };
-        assert_eq!(key_to_command(Key::ArrowDown, M::SHIFT, c), Some(Command::Down));
-        assert_eq!(key_to_command(Key::Enter, M::NONE, c), Some(Command::Confirm));
-        assert_eq!(key_to_command(Key::Escape, M::NONE, c), Some(Command::Cancel));
+        let c = &Mode::Create {
+            anchor: crate::model::Slot(0),
+            title: None,
+        };
+        assert_eq!(
+            key_to_command(Key::ArrowDown, M::SHIFT, c),
+            Some(Command::Down)
+        );
+        assert_eq!(
+            key_to_command(Key::Enter, M::NONE, c),
+            Some(Command::Confirm)
+        );
+        assert_eq!(
+            key_to_command(Key::Escape, M::NONE, c),
+            Some(Command::Cancel)
+        );
         let t = &Mode::ThemePicker { original: 0 };
         assert_eq!(key_to_command(Key::ArrowUp, M::NONE, t), Some(Command::Up));
-        assert_eq!(key_to_command(Key::Escape, M::NONE, &Mode::Help), Some(Command::ToggleHelp));
+        assert_eq!(
+            key_to_command(Key::Escape, M::NONE, &Mode::Help),
+            Some(Command::ToggleHelp)
+        );
         assert_eq!(text_to_command("?", &Mode::Help), Some(Command::ToggleHelp));
     }
 
     #[test]
     fn backspace_maps_by_mode() {
-        let e = Mode::EditTitle { idx: 0, original: String::new(), is_new: false };
-        assert_eq!(key_to_command(Key::Backspace, M::NONE, &Mode::Normal), Some(Command::Delete));
-        assert_eq!(key_to_command(Key::Backspace, M::NONE, &e), Some(Command::Backspace));
+        let e = Mode::EditTitle {
+            idx: 0,
+            original: String::new(),
+            is_new: false,
+        };
+        assert_eq!(
+            key_to_command(Key::Backspace, M::NONE, &Mode::Normal),
+            Some(Command::Delete)
+        );
+        assert_eq!(
+            key_to_command(Key::Backspace, M::NONE, &e),
+            Some(Command::Backspace)
+        );
         assert_eq!(key_to_command(Key::ArrowLeft, M::NONE, &e), None);
         assert_eq!(text_to_command("1", &e), Some(Command::Text("1".into())));
-        assert_eq!(text_to_command("1", &Mode::Normal), Some(Command::SetKind(Kind::Standard)));
-        assert_eq!(text_to_command("3", &Mode::Normal), Some(Command::SetKind(Kind::Deep)));
+        assert_eq!(
+            text_to_command("1", &Mode::Normal),
+            Some(Command::SetKind(Kind::Standard))
+        );
+        assert_eq!(
+            text_to_command("3", &Mode::Normal),
+            Some(Command::SetKind(Kind::Deep))
+        );
         assert_eq!(text_to_command("?", &e), Some(Command::Text("?".into())));
         assert_eq!(text_to_command("z", &Mode::Normal), None);
     }
@@ -244,25 +362,61 @@ mod tests {
     #[test]
     fn shortcuts_only_outside_editing() {
         let n = &Mode::Normal;
-        let et = &Mode::EditTask { idx: 0, original: String::new(), is_new: true };
-        for (ch, cmd) in [("n", Command::New), ("N", Command::NewChild), ("x", Command::ToggleDone), (" ", Command::ToggleDone),
-                          ("b", Command::ScheduleTask), (">", Command::Indent), ("<", Command::Outdent), ("d", Command::Delete),
-                          ("e", Command::EditTitle), ("t", Command::Today)] {
+        let et = &Mode::EditTask {
+            idx: 0,
+            original: String::new(),
+            is_new: true,
+        };
+        for (ch, cmd) in [
+            ("n", Command::New),
+            ("N", Command::NewChild),
+            ("x", Command::ToggleDone),
+            (" ", Command::ToggleDone),
+            ("b", Command::ScheduleTask),
+            (">", Command::Indent),
+            ("<", Command::Outdent),
+            ("d", Command::Delete),
+            ("e", Command::EditTitle),
+            ("t", Command::Today),
+        ] {
             assert_eq!(text_to_command(ch, n), Some(cmd), "{ch}");
-            assert_eq!(text_to_command(ch, et), Some(Command::Text(ch.into())), "{ch}");
+            assert_eq!(
+                text_to_command(ch, et),
+                Some(Command::Text(ch.into())),
+                "{ch}"
+            );
         }
     }
 
     #[test]
     fn pane_and_outline_keys() {
         let n = &Mode::Normal;
-        assert_eq!(key_to_command(Key::Tab, M::NONE, n), Some(Command::SwitchPane));
-        assert_eq!(key_to_command(Key::ArrowDown, M::COMMAND, n), Some(Command::NextBlock));
-        assert_eq!(key_to_command(Key::ArrowRight, M::ALT, n), Some(Command::Indent));
-        assert_eq!(key_to_command(Key::ArrowLeft, M::ALT, n), Some(Command::Outdent));
+        assert_eq!(
+            key_to_command(Key::Tab, M::NONE, n),
+            Some(Command::SwitchPane)
+        );
+        assert_eq!(
+            key_to_command(Key::ArrowDown, M::COMMAND, n),
+            Some(Command::NextBlock)
+        );
+        assert_eq!(
+            key_to_command(Key::ArrowRight, M::ALT, n),
+            Some(Command::Indent)
+        );
+        assert_eq!(
+            key_to_command(Key::ArrowLeft, M::ALT, n),
+            Some(Command::Outdent)
+        );
         assert_eq!(key_to_command(Key::Home, M::NONE, n), Some(Command::Home));
-        let mv = &Mode::MoveBlock { idx: 0, grab: 0, target: Slot(0) };
-        assert_eq!(key_to_command(Key::Escape, M::NONE, mv), Some(Command::Cancel));
+        let mv = &Mode::MoveBlock {
+            idx: 0,
+            grab: 0,
+            target: Slot(0),
+        };
+        assert_eq!(
+            key_to_command(Key::Escape, M::NONE, mv),
+            Some(Command::Cancel)
+        );
         assert_eq!(key_to_command(Key::ArrowDown, M::NONE, mv), None);
     }
 }

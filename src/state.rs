@@ -21,11 +21,28 @@ pub enum Focus {
 #[derive(Clone, Debug, PartialEq)]
 pub enum Mode {
     Normal,
-    Create { anchor: Slot, title: Option<String> },
-    EditTitle { idx: usize, original: String, is_new: bool },
-    EditTask { idx: usize, original: String, is_new: bool },
-    MoveBlock { idx: usize, grab: u16, target: Slot },
-    ThemePicker { original: usize },
+    Create {
+        anchor: Slot,
+        title: Option<String>,
+    },
+    EditTitle {
+        idx: usize,
+        original: String,
+        is_new: bool,
+    },
+    EditTask {
+        idx: usize,
+        original: String,
+        is_new: bool,
+    },
+    MoveBlock {
+        idx: usize,
+        grab: u16,
+        target: Slot,
+    },
+    ThemePicker {
+        original: usize,
+    },
     Help,
 }
 
@@ -121,7 +138,11 @@ impl AppState {
             Ok(tasks) => s.tasks = tasks,
             Err(e) => {
                 let msg = format!("tasks.txt load failed: {e}");
-                s.status = if s.status.is_empty() { msg } else { format!("{} · {msg}", s.status) };
+                s.status = if s.status.is_empty() {
+                    msg
+                } else {
+                    format!("{} · {msg}", s.status)
+                };
                 s.tasks_load_failed = true;
             }
         }
@@ -170,7 +191,12 @@ impl AppState {
             return;
         };
         self.checkpoint();
-        let block = Block { start, end, kind: Kind::Standard, title: title.to_string() };
+        let block = Block {
+            start,
+            end,
+            kind: Kind::Standard,
+            title: title.to_string(),
+        };
         match self.day.add(block) {
             Ok(_) => {
                 self.cursor = start;
@@ -227,10 +253,17 @@ impl AppState {
         self.focus = Focus::Timeline;
         self.cursor = clamp_cursor(slot.0 as i32);
         self.mode = match self.selected() {
-            None => Mode::Create { anchor: self.cursor, title: None },
+            None => Mode::Create {
+                anchor: self.cursor,
+                title: None,
+            },
             Some(idx) => {
                 let start = self.day.blocks()[idx].start;
-                Mode::MoveBlock { idx, grab: self.cursor.0 - start.0, target: start }
+                Mode::MoveBlock {
+                    idx,
+                    grab: self.cursor.0 - start.0,
+                    target: start,
+                }
             }
         };
     }
@@ -275,7 +308,11 @@ impl AppState {
                 Command::Cancel => self.mode = Mode::Normal,
                 _ => {}
             },
-            Mode::EditTitle { idx, original, is_new } => match cmd {
+            Mode::EditTitle {
+                idx,
+                original,
+                is_new,
+            } => match cmd {
                 Command::Text(t) => self.title_buf.extend(t.chars().filter(|c| !c.is_control())),
                 Command::Backspace => {
                     self.title_buf.pop();
@@ -299,7 +336,11 @@ impl AppState {
                 }
                 _ => {}
             },
-            Mode::EditTask { idx, original, is_new } => match cmd {
+            Mode::EditTask {
+                idx,
+                original,
+                is_new,
+            } => match cmd {
                 Command::Text(t) => self.title_buf.extend(t.chars().filter(|c| !c.is_control())),
                 Command::Backspace => {
                     self.title_buf.pop();
@@ -370,7 +411,11 @@ impl AppState {
                     self.status = "saved".into();
                 }
             }
-            Command::OpenThemes => self.mode = Mode::ThemePicker { original: self.theme },
+            Command::OpenThemes => {
+                self.mode = Mode::ThemePicker {
+                    original: self.theme,
+                }
+            }
             Command::ToggleHelp => self.mode = Mode::Help,
             Command::SwitchPane => {
                 self.focus = match self.focus {
@@ -402,23 +447,38 @@ impl AppState {
                 let idx = self.tasks.insert(after, cmd == Command::NewChild);
                 self.task_sel = idx;
                 self.title_buf.clear();
-                self.mode = Mode::EditTask { idx, original: String::new(), is_new: true };
+                self.mode = Mode::EditTask {
+                    idx,
+                    original: String::new(),
+                    is_new: true,
+                };
             }
             Command::ScheduleTask => {
-                let Some(idx) = self.selected_task() else { return };
+                let Some(idx) = self.selected_task() else {
+                    return;
+                };
                 self.focus = Focus::Timeline;
                 if self.selected().is_some() {
                     self.status = "slot occupied".into();
                     return;
                 }
                 let title = self.tasks.items()[idx].title.clone();
-                self.mode = Mode::Create { anchor: self.cursor, title: Some(title) };
+                self.mode = Mode::Create {
+                    anchor: self.cursor,
+                    title: Some(title),
+                };
             }
             Command::EditTitle => {
-                let Some(idx) = self.selected_task() else { return };
+                let Some(idx) = self.selected_task() else {
+                    return;
+                };
                 let original = self.tasks.items()[idx].title.clone();
                 self.title_buf = original.clone();
-                self.mode = Mode::EditTask { idx, original, is_new: false };
+                self.mode = Mode::EditTask {
+                    idx,
+                    original,
+                    is_new: false,
+                };
             }
             Command::Delete => self.edit_task(|t, i| {
                 t.remove(i);
@@ -439,7 +499,9 @@ impl AppState {
     /// Applies an edit to the selected task. `op` returns the item's new index, or `None` to
     /// refuse. On success it checkpoints the prior list, keeps the selection on the item, saves.
     fn edit_task(&mut self, op: impl FnOnce(&mut TaskList, usize) -> Option<usize>) {
-        let Some(idx) = self.selected_task() else { return };
+        let Some(idx) = self.selected_task() else {
+            return;
+        };
         let before = self.tasks.clone();
         match op(&mut self.tasks, idx) {
             Some(new_idx) => {
@@ -465,7 +527,13 @@ impl AppState {
                 }
             }
             Command::PrevBlock => {
-                if let Some(b) = self.day.blocks().iter().rev().find(|b| b.start < self.cursor) {
+                if let Some(b) = self
+                    .day
+                    .blocks()
+                    .iter()
+                    .rev()
+                    .find(|b| b.start < self.cursor)
+                {
                     self.cursor = b.start;
                 }
             }
@@ -474,7 +542,10 @@ impl AppState {
                     self.status = "slot occupied".into();
                     return;
                 }
-                self.mode = Mode::Create { anchor: self.cursor, title: None };
+                self.mode = Mode::Create {
+                    anchor: self.cursor,
+                    title: None,
+                };
                 match cmd {
                     Command::ExtendDown => self.move_cursor(1),
                     Command::ExtendUp => self.move_cursor(-1),
@@ -482,10 +553,16 @@ impl AppState {
                 }
             }
             Command::EditTitle => {
-                let Some(idx) = self.selected_or_status() else { return };
+                let Some(idx) = self.selected_or_status() else {
+                    return;
+                };
                 let original = self.day.blocks()[idx].title.clone();
                 self.title_buf = original.clone();
-                self.mode = Mode::EditTitle { idx, original, is_new: false };
+                self.mode = Mode::EditTitle {
+                    idx,
+                    original,
+                    is_new: false,
+                };
             }
             Command::SetKind(k) => self.edit(|d, i| {
                 d.set_kind(i, k);
@@ -514,7 +591,9 @@ impl AppState {
     /// Applies an edit to the block under the cursor. On success it checkpoints the prior day,
     /// keeps the cursor on the edited block (`usize::MAX` = block removed), and saves.
     fn edit(&mut self, op: impl FnOnce(&mut Day, usize) -> Result<usize, EditError>) {
-        let Some(idx) = self.selected_or_status() else { return };
+        let Some(idx) = self.selected_or_status() else {
+            return;
+        };
         let before = self.day.clone();
         let offset = self.cursor.0 - self.day.blocks()[idx].start.0;
         match op(&mut self.day, idx) {
@@ -546,14 +625,22 @@ impl AppState {
         self.mode = Mode::Normal;
         let Some((start, end)) = range else { return };
         self.checkpoint();
-        let block =
-            Block { start, end, kind: Kind::Standard, title: preset.clone().unwrap_or_default() };
+        let block = Block {
+            start,
+            end,
+            kind: Kind::Standard,
+            title: preset.clone().unwrap_or_default(),
+        };
         match self.day.add(block) {
             Ok(idx) => {
                 self.cursor = start;
                 if preset.is_none() {
                     self.title_buf.clear();
-                    self.mode = Mode::EditTitle { idx, original: String::new(), is_new: true };
+                    self.mode = Mode::EditTitle {
+                        idx,
+                        original: String::new(),
+                        is_new: true,
+                    };
                 }
                 self.save();
             }
@@ -581,16 +668,29 @@ impl AppState {
     }
 
     fn time_travel(&mut self, undo: bool) {
-        let popped = if undo { self.history.pop() } else { self.future.pop() };
+        let popped = if undo {
+            self.history.pop()
+        } else {
+            self.future.pop()
+        };
         let Some(snap) = popped else {
-            self.status = if undo { "nothing to undo" } else { "nothing to redo" }.into();
+            self.status = if undo {
+                "nothing to undo"
+            } else {
+                "nothing to redo"
+            }
+            .into();
             return;
         };
         let (date, day) = match snap {
             Snapshot::Day(date, day) => (date, day),
             Snapshot::Tasks(list) => {
                 let current = Snapshot::Tasks(std::mem::replace(&mut self.tasks, list));
-                if undo { self.future.push(current) } else { self.history.push(current) }
+                if undo {
+                    self.future.push(current)
+                } else {
+                    self.history.push(current)
+                }
                 self.task_sel = self.selected_task().unwrap_or(0);
                 self.save_tasks();
                 return;
@@ -603,7 +703,11 @@ impl AppState {
             self.load_current();
         }
         let current = Snapshot::Day(self.date, self.day.clone());
-        if undo { self.future.push(current) } else { self.history.push(current) }
+        if undo {
+            self.future.push(current)
+        } else {
+            self.history.push(current)
+        }
         self.day = day;
         self.save();
     }
@@ -652,14 +756,24 @@ mod tests {
 
     fn st() -> (tempfile::TempDir, AppState) {
         let tmp = tempfile::tempdir().unwrap();
-        let s = AppState::new(Store { dir: tmp.path().to_path_buf() }, D);
+        let s = AppState::new(
+            Store {
+                dir: tmp.path().to_path_buf(),
+            },
+            D,
+        );
         (tmp, s)
     }
 
     fn st_with_block(s0: u16, e0: u16) -> (tempfile::TempDir, AppState) {
         let (tmp, mut s) = st();
         s.day
-            .add(Block { start: Slot(s0), end: Slot(e0), kind: Kind::Standard, title: "a".into() })
+            .add(Block {
+                start: Slot(s0),
+                end: Slot(e0),
+                kind: Kind::Standard,
+                title: "a".into(),
+            })
             .unwrap();
         s.save();
         s.cursor = Slot(s0);
@@ -732,14 +846,22 @@ mod tests {
         let (_t, mut s) = st_with_block(36, 40);
         s.apply(Command::SetKind(Kind::Scheduled), D);
         assert_eq!(s.day.blocks()[0].kind, Kind::Scheduled);
-        assert_eq!(s.store.load_day(D).unwrap().blocks()[0].kind, Kind::Scheduled);
+        assert_eq!(
+            s.store.load_day(D).unwrap().blocks()[0].kind,
+            Kind::Scheduled
+        );
     }
 
     #[test]
     fn move_refusal_sets_status() {
         let (_t, mut s) = st_with_block(36, 40);
         s.day
-            .add(Block { start: Slot(40), end: Slot(44), kind: Kind::Standard, title: String::new() })
+            .add(Block {
+                start: Slot(40),
+                end: Slot(44),
+                kind: Kind::Standard,
+                title: String::new(),
+            })
             .unwrap();
         s.cursor = Slot(36);
         s.apply(Command::MoveDown, D);
@@ -800,7 +922,12 @@ mod tests {
         let file = tmp.path().join("2026-11-10.txt");
         let bytes = [0xffu8, 0xfe, b'x', b'\n'];
         std::fs::write(&file, bytes).unwrap();
-        let mut s = AppState::new(Store { dir: tmp.path().to_path_buf() }, D);
+        let mut s = AppState::new(
+            Store {
+                dir: tmp.path().to_path_buf(),
+            },
+            D,
+        );
         assert!(s.status.starts_with("load failed"), "{}", s.status);
         s.cursor = Slot(10);
         s.apply(Command::New, D);
@@ -818,7 +945,10 @@ mod tests {
         let file = t.path().join("2026-11-10.txt");
         std::fs::write(&file, "10:00-11:00 deep edited elsewhere\n").unwrap();
         s.apply(Command::NextDay, D);
-        assert_eq!(std::fs::read_to_string(&file).unwrap(), "10:00-11:00 deep edited elsewhere\n");
+        assert_eq!(
+            std::fs::read_to_string(&file).unwrap(),
+            "10:00-11:00 deep edited elsewhere\n"
+        );
     }
 
     #[test]
@@ -849,7 +979,12 @@ mod tests {
     fn next_prev_block_jump() {
         let (_t, mut s) = st_with_block(10, 12);
         s.day
-            .add(Block { start: Slot(40), end: Slot(44), kind: Kind::Deep, title: String::new() })
+            .add(Block {
+                start: Slot(40),
+                end: Slot(44),
+                kind: Kind::Deep,
+                title: String::new(),
+            })
             .unwrap();
         s.cursor = Slot(0);
         s.apply(Command::NextBlock, D);
@@ -874,7 +1009,10 @@ mod tests {
         s.apply(Command::Up, D);
         s.apply(Command::Confirm, D);
         assert_eq!(s.mode, Mode::Normal);
-        assert_eq!(s.store.load_theme().as_deref(), Some(themes()[s.theme].name));
+        assert_eq!(
+            s.store.load_theme().as_deref(),
+            Some(themes()[s.theme].name)
+        );
     }
 
     #[test]
@@ -883,7 +1021,10 @@ mod tests {
         s.drag_start(Slot(44));
         s.drag_update(Slot(40));
         s.drag_end();
-        assert_eq!((s.day.blocks()[0].start, s.day.blocks()[0].end), (Slot(40), Slot(45)));
+        assert_eq!(
+            (s.day.blocks()[0].start, s.day.blocks()[0].end),
+            (Slot(40), Slot(45))
+        );
     }
 
     #[test]
@@ -892,7 +1033,10 @@ mod tests {
         s.drag_start(Slot(36));
         s.drag_update(Slot(50));
         s.drag_end();
-        assert_eq!(s.day.block_at(Slot(36)).map(|i| s.day.blocks()[i].end), Some(Slot(40)));
+        assert_eq!(
+            s.day.block_at(Slot(36)).map(|i| s.day.blocks()[i].end),
+            Some(Slot(40))
+        );
         s.apply(Command::Cancel, D);
         s.drag_start(Slot(41));
         s.drag_end();
@@ -916,7 +1060,12 @@ mod tests {
     fn st_tasks(txt: &str) -> (tempfile::TempDir, AppState) {
         let tmp = tempfile::tempdir().unwrap();
         std::fs::write(tmp.path().join("tasks.txt"), txt).unwrap();
-        let mut s = AppState::new(Store { dir: tmp.path().to_path_buf() }, D);
+        let mut s = AppState::new(
+            Store {
+                dir: tmp.path().to_path_buf(),
+            },
+            D,
+        );
         s.focus = Focus::Tasks;
         (tmp, s)
     }
@@ -931,7 +1080,10 @@ mod tests {
         s.apply(Command::NewChild, D);
         s.apply(Command::Text("Outline".into()), D);
         s.apply(Command::Confirm, D);
-        assert_eq!(s.store.load_tasks().unwrap(), parse_tasks("- [ ] Report\n  - [ ] Outline\n"));
+        assert_eq!(
+            s.store.load_tasks().unwrap(),
+            parse_tasks("- [ ] Report\n  - [ ] Outline\n")
+        );
         assert_eq!(s.selected_task(), Some(1));
     }
 
@@ -1019,8 +1171,17 @@ mod tests {
         let file = tmp.path().join("tasks.txt");
         let bytes = [0xffu8, 0xfe];
         std::fs::write(&file, bytes).unwrap();
-        let mut s = AppState::new(Store { dir: tmp.path().to_path_buf() }, D);
-        assert!(s.status.starts_with("tasks.txt load failed"), "{}", s.status);
+        let mut s = AppState::new(
+            Store {
+                dir: tmp.path().to_path_buf(),
+            },
+            D,
+        );
+        assert!(
+            s.status.starts_with("tasks.txt load failed"),
+            "{}",
+            s.status
+        );
         s.focus = Focus::Tasks;
         s.apply(Command::New, D);
         s.apply(Command::Text("x".into()), D);
@@ -1032,9 +1193,18 @@ mod tests {
     #[test]
     fn both_load_errors_reported() {
         let tmp = tempfile::tempdir().unwrap();
-        std::fs::write(tmp.path().join(format!("{}.txt", D.format("%Y-%m-%d"))), [0xffu8, 0xfe]).unwrap();
+        std::fs::write(
+            tmp.path().join(format!("{}.txt", D.format("%Y-%m-%d"))),
+            [0xffu8, 0xfe],
+        )
+        .unwrap();
         std::fs::write(tmp.path().join("tasks.txt"), [0xffu8, 0xfe]).unwrap();
-        let s = AppState::new(Store { dir: tmp.path().to_path_buf() }, D);
+        let s = AppState::new(
+            Store {
+                dir: tmp.path().to_path_buf(),
+            },
+            D,
+        );
         assert!(s.status.starts_with("load failed"), "{}", s.status);
         assert!(s.status.contains("tasks.txt load failed"), "{}", s.status);
     }
@@ -1053,7 +1223,10 @@ mod tests {
         s.drag_update(Slot(45));
         assert_eq!(s.move_preview(), Some((Slot(44), Slot(48))));
         s.drag_end();
-        assert_eq!((s.day.blocks()[0].start, s.day.blocks()[0].end), (Slot(44), Slot(48)));
+        assert_eq!(
+            (s.day.blocks()[0].start, s.day.blocks()[0].end),
+            (Slot(44), Slot(48))
+        );
         assert_eq!(s.store.load_day(D).unwrap(), s.day);
         s.apply(Command::Undo, D);
         assert_eq!(s.day.blocks()[0].start, Slot(36));
@@ -1063,7 +1236,12 @@ mod tests {
     fn drag_move_refuses_overlap() {
         let (_t, mut s) = st_with_block(36, 40);
         s.day
-            .add(Block { start: Slot(50), end: Slot(52), kind: Kind::Deep, title: String::new() })
+            .add(Block {
+                start: Slot(50),
+                end: Slot(52),
+                kind: Kind::Deep,
+                title: String::new(),
+            })
             .unwrap();
         s.drag_start(Slot(36));
         s.drag_update(Slot(49));
@@ -1105,18 +1283,29 @@ mod tests {
         s.apply(Command::Confirm, D);
         assert_eq!(s.mode, Mode::Normal);
         let b = &s.day.blocks()[0];
-        assert_eq!((b.start, b.end, b.title.as_str()), (Slot(40), Slot(42), "Write report"));
+        assert_eq!(
+            (b.start, b.end, b.title.as_str()),
+            (Slot(40), Slot(42), "Write report")
+        );
     }
 
     #[test]
     fn drop_task_makes_one_hour_block_clipped() {
         let (_t, mut s) = st_tasks("- [ ] a\n");
         s.day
-            .add(Block { start: Slot(42), end: Slot(44), kind: Kind::Deep, title: String::new() })
+            .add(Block {
+                start: Slot(42),
+                end: Slot(44),
+                kind: Kind::Deep,
+                title: String::new(),
+            })
             .unwrap();
         s.drop_task("a", Slot(40));
         let i = s.day.block_at(Slot(40)).unwrap();
-        assert_eq!((s.day.blocks()[i].end, s.day.blocks()[i].title.as_str()), (Slot(42), "a"));
+        assert_eq!(
+            (s.day.blocks()[i].end, s.day.blocks()[i].title.as_str()),
+            (Slot(42), "a")
+        );
         assert_eq!((s.cursor, s.focus), (Slot(40), Focus::Timeline));
         assert_eq!(s.day.blocks().len(), 2);
         s.drop_task("a", Slot(43));
@@ -1128,7 +1317,10 @@ mod tests {
     fn drop_task_clamps_at_day_end() {
         let (_t, mut s) = st_tasks("- [ ] a\n");
         s.drop_task("a", Slot(95));
-        assert_eq!((s.day.blocks()[0].start, s.day.blocks()[0].end), (Slot(95), Slot(96)));
+        assert_eq!(
+            (s.day.blocks()[0].start, s.day.blocks()[0].end),
+            (Slot(95), Slot(96))
+        );
     }
 
     #[test]
@@ -1170,7 +1362,12 @@ mod tests {
     fn drop_range_matches_drop_task() {
         let (_t, mut s) = st_tasks("- [ ] a\n");
         s.day
-            .add(Block { start: Slot(42), end: Slot(44), kind: Kind::Deep, title: String::new() })
+            .add(Block {
+                start: Slot(42),
+                end: Slot(44),
+                kind: Kind::Deep,
+                title: String::new(),
+            })
             .unwrap();
         assert_eq!(s.drop_range(Slot(40)), Some((Slot(40), Slot(42))));
         assert_eq!(s.drop_range(Slot(10)), Some((Slot(10), Slot(14))));
@@ -1182,7 +1379,12 @@ mod tests {
     fn schedule_task_on_occupied_slot_refuses() {
         let (_t, mut s) = st_tasks("- [ ] a\n");
         s.day
-            .add(Block { start: Slot(40), end: Slot(42), kind: Kind::Deep, title: String::new() })
+            .add(Block {
+                start: Slot(40),
+                end: Slot(42),
+                kind: Kind::Deep,
+                title: String::new(),
+            })
             .unwrap();
         s.cursor = Slot(40);
         s.apply(Command::ScheduleTask, D);

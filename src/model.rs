@@ -29,7 +29,9 @@ impl Slot {
 
     fn offset(self, delta: i32) -> Option<Slot> {
         let v = self.0 as i32 + delta;
-        (0..=SLOTS_PER_DAY as i32).contains(&v).then_some(Slot(v as u16))
+        (0..=SLOTS_PER_DAY as i32)
+            .contains(&v)
+            .then_some(Slot(v as u16))
     }
 }
 
@@ -51,7 +53,9 @@ impl Kind {
     }
 
     pub fn parse(s: &str) -> Option<Kind> {
-        [Kind::Standard, Kind::Scheduled, Kind::Deep].into_iter().find(|k| k.as_str() == s)
+        [Kind::Standard, Kind::Scheduled, Kind::Deep]
+            .into_iter()
+            .find(|k| k.as_str() == s)
     }
 }
 
@@ -86,7 +90,9 @@ impl Day {
     }
 
     pub fn block_at(&self, slot: Slot) -> Option<usize> {
-        self.blocks.iter().position(|b| b.start <= slot && slot < b.end)
+        self.blocks
+            .iter()
+            .position(|b| b.start <= slot && slot < b.end)
     }
 
     pub fn add(&mut self, b: Block) -> Result<usize, EditError> {
@@ -115,7 +121,11 @@ impl Day {
             (Some(s), Some(e)) => (s, e),
             _ => return Err(EditError::OutOfBounds),
         };
-        let moved = Block { start, end, ..b.clone() };
+        let moved = Block {
+            start,
+            end,
+            ..b.clone()
+        };
         self.check(&moved, Some(idx))?;
         self.blocks.remove(idx);
         self.add(moved)
@@ -141,14 +151,24 @@ impl Day {
             return None;
         }
         if other >= anchor {
-            let next_start = self.blocks.iter().map(|b| b.start).filter(|s| *s > anchor).min();
+            let next_start = self
+                .blocks
+                .iter()
+                .map(|b| b.start)
+                .filter(|s| *s > anchor)
+                .min();
             let mut end = Slot(other.0.min(SLOTS_PER_DAY - 1) + 1);
             if let Some(n) = next_start {
                 end = end.min(n);
             }
             Some((anchor, end))
         } else {
-            let prev_end = self.blocks.iter().map(|b| b.end).filter(|e| *e <= anchor).max();
+            let prev_end = self
+                .blocks
+                .iter()
+                .map(|b| b.end)
+                .filter(|e| *e <= anchor)
+                .max();
             let start = prev_end.map_or(other, |p| other.max(p));
             Some((start, Slot(anchor.0 + 1)))
         }
@@ -170,7 +190,11 @@ impl Day {
             .iter()
             .enumerate()
             .any(|(i, x)| Some(i) != ignore && x.start < b.end && b.start < x.end);
-        if overlaps { Err(EditError::Overlap) } else { Ok(()) }
+        if overlaps {
+            Err(EditError::Overlap)
+        } else {
+            Ok(())
+        }
     }
 }
 
@@ -179,7 +203,12 @@ mod tests {
     use super::*;
 
     fn blk(s: u16, e: u16) -> Block {
-        Block { start: Slot(s), end: Slot(e), kind: Kind::Standard, title: String::new() }
+        Block {
+            start: Slot(s),
+            end: Slot(e),
+            kind: Kind::Standard,
+            title: String::new(),
+        }
     }
 
     #[test]

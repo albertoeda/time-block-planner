@@ -1,6 +1,6 @@
 pub mod model;
-pub mod storage;
-pub mod theme;
 pub mod state;
-pub mod ui;
+pub mod storage;
 pub mod tasks;
+pub mod theme;
+pub mod ui;

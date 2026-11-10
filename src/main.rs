@@ -13,7 +13,9 @@ fn main() -> eframe::Result {
             cli_dir = args.next().map(PathBuf::from);
         }
     }
-    let store = Store { dir: resolve_dir(cli_dir) };
+    let store = Store {
+        dir: resolve_dir(cli_dir),
+    };
 
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()

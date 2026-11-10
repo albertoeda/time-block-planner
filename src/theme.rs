@@ -43,7 +43,11 @@ impl Theme {
 
     /// Whichever of `fg`/`bg` reads better on `fill` (higher WCAG contrast).
     pub fn text_on(&self, fill: Rgb) -> Rgb {
-        if contrast(self.fg, fill) >= contrast(self.bg, fill) { self.fg } else { self.bg }
+        if contrast(self.fg, fill) >= contrast(self.bg, fill) {
+            self.fg
+        } else {
+            self.bg
+        }
     }
 }
 
@@ -54,9 +58,25 @@ macro_rules! sources {
 }
 
 const SOURCES: &[(&str, &str)] = sources!(
-    "catppuccin-latte", "catppuccin", "ethereal", "everforest", "flexoki-light", "gruvbox",
-    "hackerman", "kanagawa", "lumon", "matte-black", "miasma", "nord", "osaka-jade", "retro-82",
-    "ristretto", "rose-pine", "tokyo-night", "vantablack", "white",
+    "catppuccin-latte",
+    "catppuccin",
+    "ethereal",
+    "everforest",
+    "flexoki-light",
+    "gruvbox",
+    "hackerman",
+    "kanagawa",
+    "lumon",
+    "matte-black",
+    "miasma",
+    "nord",
+    "osaka-jade",
+    "retro-82",
+    "ristretto",
+    "rose-pine",
+    "tokyo-night",
+    "vantablack",
+    "white",
 );
 
 const DEFAULT_THEME: &str = "tokyo-night";
@@ -85,10 +105,19 @@ pub fn theme_index(name: &str) -> usize {
 /// Parses Omarchy's flat `key = "#rrggbb"` format.
 pub fn parse_colors(src: &str) -> Result<HashMap<String, Rgb>, String> {
     let mut map = HashMap::new();
-    for line in src.lines().map(str::trim).filter(|l| !l.is_empty() && !l.starts_with('#')) {
-        let (key, value) = line.split_once('=').ok_or_else(|| format!("bad line: {line}"))?;
+    for line in src
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty() && !l.starts_with('#'))
+    {
+        let (key, value) = line
+            .split_once('=')
+            .ok_or_else(|| format!("bad line: {line}"))?;
         let value = value.trim().trim_matches('"');
-        map.insert(key.trim().to_string(), parse_hex(value).ok_or_else(|| format!("bad color: {line}"))?);
+        map.insert(
+            key.trim().to_string(),
+            parse_hex(value).ok_or_else(|| format!("bad color: {line}"))?,
+        );
     }
     Ok(map)
 }
@@ -104,7 +133,11 @@ fn parse_hex(s: &str) -> Option<Rgb> {
 
 /// Maps Omarchy color keys onto the app's roles (see the plan's Task 3 derivation rules).
 pub fn derive_theme(name: &'static str, c: &HashMap<String, Rgb>) -> Result<Theme, String> {
-    let get = |k: &str| c.get(k).copied().ok_or_else(|| format!("{name}: missing {k}"));
+    let get = |k: &str| {
+        c.get(k)
+            .copied()
+            .ok_or_else(|| format!("{name}: missing {k}"))
+    };
     let (bg, fg) = (get("background")?, get("foreground")?);
 
     let mut taken = vec![bg];
@@ -146,7 +179,11 @@ fn mix(a: Rgb, b: Rgb) -> Rgb {
 pub fn luminance(c: Rgb) -> f32 {
     let lin = |v: u8| {
         let s = v as f32 / 255.0;
-        if s <= 0.04045 { s / 12.92 } else { ((s + 0.055) / 1.055).powf(2.4) }
+        if s <= 0.04045 {
+            s / 12.92
+        } else {
+            ((s + 0.055) / 1.055).powf(2.4)
+        }
     };
     0.2126 * lin(c.0) + 0.7152 * lin(c.1) + 0.0722 * lin(c.2)
 }
@@ -179,9 +216,25 @@ mod tests {
         assert_eq!(
             names,
             [
-                "catppuccin-latte", "catppuccin", "ethereal", "everforest", "flexoki-light", "gruvbox",
-                "hackerman", "kanagawa", "lumon", "matte-black", "miasma", "nord", "osaka-jade",
-                "retro-82", "ristretto", "rose-pine", "tokyo-night", "vantablack", "white"
+                "catppuccin-latte",
+                "catppuccin",
+                "ethereal",
+                "everforest",
+                "flexoki-light",
+                "gruvbox",
+                "hackerman",
+                "kanagawa",
+                "lumon",
+                "matte-black",
+                "miasma",
+                "nord",
+                "osaka-jade",
+                "retro-82",
+                "ristretto",
+                "rose-pine",
+                "tokyo-night",
+                "vantablack",
+                "white"
             ]
         );
     }

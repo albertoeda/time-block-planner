@@ -55,7 +55,14 @@ impl TaskList {
             Some(a) if child => (a + 1, (self.items[a].depth + 1).min(MAX_DEPTH)),
             Some(a) => (self.subtree_end(a), self.items[a].depth),
         };
-        self.items.insert(idx, Task { title: String::new(), done: false, depth });
+        self.items.insert(
+            idx,
+            Task {
+                title: String::new(),
+                done: false,
+                depth,
+            },
+        );
         idx
     }
 
@@ -137,19 +144,28 @@ mod tests {
     fn list(spec: &[(u8, &str)]) -> TaskList {
         TaskList::from_items(
             spec.iter()
-                .map(|&(depth, title)| Task { title: title.to_string(), done: false, depth })
+                .map(|&(depth, title)| Task {
+                    title: title.to_string(),
+                    done: false,
+                    depth,
+                })
                 .collect(),
         )
     }
     fn titles(l: &TaskList) -> Vec<(u8, &str)> {
-        l.items().iter().map(|t| (t.depth, t.title.as_str())).collect()
+        l.items()
+            .iter()
+            .map(|t| (t.depth, t.title.as_str()))
+            .collect()
     }
 
-    #[test] fn from_items_normalizes_depth() {
+    #[test]
+    fn from_items_normalizes_depth() {
         let l = list(&[(2, "a"), (5, "b"), (1, "c")]);
         assert_eq!(titles(&l), [(0, "a"), (1, "b"), (1, "c")]);
     }
-    #[test] fn insert_sibling_goes_after_subtree() {
+    #[test]
+    fn insert_sibling_goes_after_subtree() {
         let mut l = list(&[(0, "a"), (1, "a1"), (0, "b")]);
         assert_eq!(l.insert(Some(0), false), 2);
         assert_eq!(l.items()[2].depth, 0);
@@ -157,25 +173,32 @@ mod tests {
         assert_eq!(l.items()[1].depth, 1);
         assert_eq!(l.insert(None, false), l.len() - 1);
     }
-    #[test] fn remove_takes_subtree() {
+    #[test]
+    fn remove_takes_subtree() {
         let mut l = list(&[(0, "a"), (1, "a1"), (2, "a1x"), (0, "b")]);
         assert_eq!(l.remove(0), 3);
         assert_eq!(titles(&l), [(0, "b")]);
     }
-    #[test] fn indent_needs_previous_sibling() {
+    #[test]
+    fn indent_needs_previous_sibling() {
         let mut l = list(&[(0, "a"), (0, "b"), (1, "b1")]);
         assert!(!l.indent(0));
         assert!(l.indent(1));
         assert_eq!(titles(&l), [(0, "a"), (1, "b"), (2, "b1")]);
         assert!(!l.indent(2)); // b1 has no previous sibling at depth 2
     }
-    #[test] fn outdent_keeps_following_siblings() {
+    #[test]
+    fn outdent_keeps_following_siblings() {
         let mut l = list(&[(0, "p"), (1, "a"), (2, "a1"), (1, "b"), (0, "q")]);
         assert_eq!(l.outdent(1), Some(2));
-        assert_eq!(titles(&l), [(0, "p"), (1, "b"), (0, "a"), (1, "a1"), (0, "q")]);
+        assert_eq!(
+            titles(&l),
+            [(0, "p"), (1, "b"), (0, "a"), (1, "a1"), (0, "q")]
+        );
         assert_eq!(l.outdent(2), None);
     }
-    #[test] fn move_swaps_sibling_subtrees() {
+    #[test]
+    fn move_swaps_sibling_subtrees() {
         let mut l = list(&[(0, "a"), (1, "a1"), (0, "b")]);
         assert_eq!(l.move_down(0), Some(1));
         assert_eq!(titles(&l), [(0, "b"), (0, "a"), (1, "a1")]);
@@ -183,9 +206,12 @@ mod tests {
         assert_eq!(l.move_up(0), None);
         assert_eq!(l.move_down(2), None); // list is a, a1, b again; b is the last sibling
     }
-    #[test] fn toggle_and_title() {
+    #[test]
+    fn toggle_and_title() {
         let mut l = list(&[(0, "a")]);
-        l.toggle_done(0); assert!(l.items()[0].done);
-        l.set_title(0, " x\ny "); assert_eq!(l.items()[0].title, "x y");
+        l.toggle_done(0);
+        assert!(l.items()[0].done);
+        l.set_title(0, " x\ny ");
+        assert_eq!(l.items()[0].title, "x y");
     }
 }

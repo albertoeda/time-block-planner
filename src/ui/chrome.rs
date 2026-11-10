@@ -16,7 +16,11 @@ pub fn faded(c: Rgb, alpha: f32) -> Color32 {
 
 /// Square, shadowless egui visuals in the theme's colors.
 pub fn visuals(theme: &Theme) -> egui::Visuals {
-    let mut v = if theme.is_light { egui::Visuals::light() } else { egui::Visuals::dark() };
+    let mut v = if theme.is_light {
+        egui::Visuals::light()
+    } else {
+        egui::Visuals::dark()
+    };
     let (bg, fg, dim) = (color(theme.bg), color(theme.fg), color(theme.dim));
     v.override_text_color = Some(fg);
     v.panel_fill = bg;
@@ -43,44 +47,74 @@ pub fn visuals(theme: &Theme) -> egui::Visuals {
 }
 
 fn bar_frame(theme: &Theme) -> Frame {
-    Frame::NONE.fill(color(theme.bg)).inner_margin(egui::Margin::symmetric(8, 4))
+    Frame::NONE
+        .fill(color(theme.bg))
+        .inner_margin(egui::Margin::symmetric(8, 4))
 }
 
 pub fn header(ui: &mut egui::Ui, state: &AppState, theme: &Theme, today: NaiveDate) {
-    egui::Panel::top("header").frame(bar_frame(theme)).show(ui, |ui| {
-        let tag = if state.date == today { " [today] ─" } else { "" };
-        let text = format!("┌─ {}{tag}", state.date.format("%a %Y-%m-%d ─"));
-        let fill = "─".repeat(200);
-        let c = if state.focus == Focus::Timeline { theme.accent } else { theme.dim };
-        ui.add(egui::Label::new(RichText::new(format!("{text}{fill}")).color(color(c))).truncate());
-    });
+    egui::Panel::top("header")
+        .frame(bar_frame(theme))
+        .show(ui, |ui| {
+            let tag = if state.date == today {
+                " [today] ─"
+            } else {
+                ""
+            };
+            let text = format!("┌─ {}{tag}", state.date.format("%a %Y-%m-%d ─"));
+            let fill = "─".repeat(200);
+            let c = if state.focus == Focus::Timeline {
+                theme.accent
+            } else {
+                theme.dim
+            };
+            ui.add(
+                egui::Label::new(RichText::new(format!("{text}{fill}")).color(color(c))).truncate(),
+            );
+        });
 }
 
 pub fn status_bar(ui: &mut egui::Ui, state: &AppState, theme: &Theme) {
-    egui::Panel::bottom("status").frame(bar_frame(theme)).show(ui, |ui| {
-        ui.horizontal(|ui| {
-            let mode = match state.mode {
-                Mode::Normal => "NORMAL",
-                Mode::Create { .. } => "CREATE",
-                Mode::EditTitle { .. } => "EDIT",
-                Mode::EditTask { .. } => "TASK",
-                Mode::MoveBlock { .. } => "MOVE",
-                Mode::ThemePicker { .. } => "THEME",
-                Mode::Help => "HELP",
-            };
-            ui.label(RichText::new(format!(" {mode} ")).color(color(theme.bg)).background_color(color(theme.accent)));
-            let status_color = if state.status == "saved" { theme.fg } else { theme.error };
-            ui.label(RichText::new(&state.status).color(color(status_color)));
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                ui.label(RichText::new(format!("{} │ F1 help", theme.name)).color(color(theme.dim)));
+    egui::Panel::bottom("status")
+        .frame(bar_frame(theme))
+        .show(ui, |ui| {
+            ui.horizontal(|ui| {
+                let mode = match state.mode {
+                    Mode::Normal => "NORMAL",
+                    Mode::Create { .. } => "CREATE",
+                    Mode::EditTitle { .. } => "EDIT",
+                    Mode::EditTask { .. } => "TASK",
+                    Mode::MoveBlock { .. } => "MOVE",
+                    Mode::ThemePicker { .. } => "THEME",
+                    Mode::Help => "HELP",
+                };
+                ui.label(
+                    RichText::new(format!(" {mode} "))
+                        .color(color(theme.bg))
+                        .background_color(color(theme.accent)),
+                );
+                let status_color = if state.status == "saved" {
+                    theme.fg
+                } else {
+                    theme.error
+                };
+                ui.label(RichText::new(&state.status).color(color(status_color)));
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    ui.label(
+                        RichText::new(format!("{} │ F1 help", theme.name)).color(color(theme.dim)),
+                    );
+                });
             });
         });
-    });
 }
 
 /// Ctrl on Windows/Linux, Cmd on macOS.
 fn mod_key() -> &'static str {
-    if cfg!(target_os = "macos") { "Cmd" } else { "Ctrl" }
+    if cfg!(target_os = "macos") {
+        "Cmd"
+    } else {
+        "Ctrl"
+    }
 }
 
 const HELP: &[(&str, &str)] = &[
@@ -114,16 +148,16 @@ const HELP: &[(&str, &str)] = &[
 ];
 
 fn overlay(ctx: &egui::Context, id: &str, theme: &Theme, contents: impl FnOnce(&mut egui::Ui)) {
-    egui::Area::new(Id::unique(id)).order(Order::Foreground).anchor(Align2::CENTER_CENTER, vec2(0.0, 0.0)).show(
-        ctx,
-        |ui| {
+    egui::Area::new(Id::unique(id))
+        .order(Order::Foreground)
+        .anchor(Align2::CENTER_CENTER, vec2(0.0, 0.0))
+        .show(ctx, |ui| {
             Frame::NONE
                 .fill(color(theme.bg))
                 .stroke(Stroke::new(1.0, color(theme.accent)))
                 .inner_margin(12)
                 .show(ui, contents);
-        },
-    );
+        });
 }
 
 pub fn help_overlay(ctx: &egui::Context, theme: &Theme) {

@@ -52,7 +52,12 @@ pub fn serialize_day(day: &Day) -> String {
         out.push('\n');
     }
     for b in day.blocks() {
-        out.push_str(&format!("{}-{} {}", b.start.label(), b.end.label(), b.kind.as_str()));
+        out.push_str(&format!(
+            "{}-{} {}",
+            b.start.label(),
+            b.end.label(),
+            b.kind.as_str()
+        ));
         if !b.title.is_empty() {
             out.push(' ');
             out.push_str(&b.title);
@@ -100,7 +105,11 @@ pub fn parse_tasks(text: &str) -> TaskList {
             (false, rest)
         };
         let depth = (indent / 2).min(u8::MAX as usize) as u8;
-        items.push(Task { title: rest.trim().to_string(), done, depth });
+        items.push(Task {
+            title: rest.trim().to_string(),
+            done,
+            depth,
+        });
     }
     TaskList::from_items(items)
 }
@@ -243,7 +252,11 @@ mod tests {
         assert_eq!(d.blocks().len(), 1);
         assert_eq!(
             d.unparsed,
-            vec!["09:10-09:40 standard off-grid", "09:30-09:45 standard overlap", "garbage"]
+            vec![
+                "09:10-09:40 standard off-grid",
+                "09:30-09:45 standard overlap",
+                "garbage"
+            ]
         );
         assert_eq!(parse_day(&serialize_day(&d)), d);
     }
@@ -273,7 +286,9 @@ mod tests {
     #[test]
     fn save_creates_missing_dir() {
         let tmp = tempfile::tempdir().unwrap();
-        let store = Store { dir: tmp.path().join("nested/plans") };
+        let store = Store {
+            dir: tmp.path().join("nested/plans"),
+        };
         let d = parse_day("09:00-09:15 deep x\n");
         store.save_day(date(), &d).unwrap();
         assert!(store.dir.join("2026-11-10.txt").exists());
@@ -283,8 +298,12 @@ mod tests {
     #[test]
     fn saving_empty_day_deletes_file() {
         let tmp = tempfile::tempdir().unwrap();
-        let store = Store { dir: tmp.path().to_path_buf() };
-        store.save_day(date(), &parse_day("09:00-09:15 deep x\n")).unwrap();
+        let store = Store {
+            dir: tmp.path().to_path_buf(),
+        };
+        store
+            .save_day(date(), &parse_day("09:00-09:15 deep x\n"))
+            .unwrap();
         store.save_day(date(), &Day::default()).unwrap();
         assert!(!store.dir.join("2026-11-10.txt").exists());
     }
@@ -292,14 +311,18 @@ mod tests {
     #[test]
     fn missing_file_loads_empty() {
         let tmp = tempfile::tempdir().unwrap();
-        let store = Store { dir: tmp.path().to_path_buf() };
+        let store = Store {
+            dir: tmp.path().to_path_buf(),
+        };
         assert_eq!(store.load_day(date()).unwrap(), Day::default());
     }
 
     #[test]
     fn theme_config_roundtrip() {
         let tmp = tempfile::tempdir().unwrap();
-        let store = Store { dir: tmp.path().join("cfg") };
+        let store = Store {
+            dir: tmp.path().join("cfg"),
+        };
         assert_eq!(store.load_theme(), None);
         store.save_theme("rose-pine").unwrap();
         assert_eq!(store.load_theme().as_deref(), Some("rose-pine"));
@@ -322,24 +345,43 @@ mod tests {
 
     #[test]
     fn parse_tasks_bare_markers_are_empty_tasks() {
-        let l = parse_tasks("- [x]
+        let l = parse_tasks(
+            "- [x]
 - [ ]
-");
-        let got: Vec<_> = l.items().iter().map(|t| (t.done, t.title.as_str())).collect();
+",
+        );
+        let got: Vec<_> = l
+            .items()
+            .iter()
+            .map(|t| (t.done, t.title.as_str()))
+            .collect();
         assert_eq!(got, [(true, ""), (false, "")]);
     }
 
     #[test]
     fn parse_tasks_tolerates_hand_edits() {
         let l = parse_tasks("\u{feff}plain line\n\t\t- [X] deep jump\n\n    - [ ]   spaced  \n");
-        let got: Vec<_> = l.items().iter().map(|t| (t.depth, t.done, t.title.as_str())).collect();
-        assert_eq!(got, [(0, false, "plain line"), (1, true, "deep jump"), (2, false, "spaced")]);
+        let got: Vec<_> = l
+            .items()
+            .iter()
+            .map(|t| (t.depth, t.done, t.title.as_str()))
+            .collect();
+        assert_eq!(
+            got,
+            [
+                (0, false, "plain line"),
+                (1, true, "deep jump"),
+                (2, false, "spaced")
+            ]
+        );
     }
 
     #[test]
     fn tasks_file_roundtrip_and_empty_deletes() {
         let tmp = tempfile::tempdir().unwrap();
-        let store = Store { dir: tmp.path().join("d") };
+        let store = Store {
+            dir: tmp.path().join("d"),
+        };
         assert!(store.load_tasks().unwrap().is_empty());
         let l = parse_tasks("- [ ] a\n");
         store.save_tasks(&l).unwrap();

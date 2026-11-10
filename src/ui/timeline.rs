@@ -51,25 +51,35 @@ pub enum Scroll {
 }
 
 pub fn show(ui: &mut egui::Ui, state: &mut AppState, theme: &Theme, scroll: Scroll) {
-    let frame = egui::Frame::NONE.fill(color(theme.bg)).inner_margin(egui::Margin::symmetric(8, 4));
-    egui::CentralPanel::default_margins().frame(frame).show(ui, |ui| {
-        egui::ScrollArea::vertical().auto_shrink(false).show(ui, |ui| {
-            draw(ui, state, theme, scroll);
+    let frame = egui::Frame::NONE
+        .fill(color(theme.bg))
+        .inner_margin(egui::Margin::symmetric(8, 4));
+    egui::CentralPanel::default_margins()
+        .frame(frame)
+        .show(ui, |ui| {
+            egui::ScrollArea::vertical()
+                .auto_shrink(false)
+                .show(ui, |ui| {
+                    draw(ui, state, theme, scroll);
+                });
         });
-    });
 }
 
 fn draw(ui: &mut egui::Ui, state: &mut AppState, theme: &Theme, scroll: Scroll) {
     let font = TextStyle::Monospace.resolve(ui.style());
     let row_h = ui.text_style_height(&TextStyle::Monospace) + 4.0;
     let width = ui.available_width();
-    let (rect, response) =
-        ui.allocate_exact_size(vec2(width, row_h * SLOTS_PER_DAY as f32), Sense::click_and_drag());
+    let (rect, response) = ui.allocate_exact_size(
+        vec2(width, row_h * SLOTS_PER_DAY as f32),
+        Sense::click_and_drag(),
+    );
 
     handle_mouse(ui, state, &response, rect.top(), row_h);
 
     // A task dropped from the task list is scheduled where it lands.
-    let pointer_slot = ui.input(|i| i.pointer.latest_pos()).map(|p| y_to_slot(p.y, rect.top(), row_h));
+    let pointer_slot = ui
+        .input(|i| i.pointer.latest_pos())
+        .map(|p| y_to_slot(p.y, rect.top(), row_h));
     if let Some(payload) = response.dnd_release_payload::<TaskDrag>()
         && let Some(slot) = pointer_slot
     {
@@ -77,7 +87,10 @@ fn draw(ui: &mut egui::Ui, state: &mut AppState, theme: &Theme, scroll: Scroll) 
     }
 
     let painter = ui.painter_at(rect);
-    let char_w = painter.layout_no_wrap("0".into(), font.clone(), color(theme.fg)).rect.width();
+    let char_w = painter
+        .layout_no_wrap("0".into(), font.clone(), color(theme.fg))
+        .rect
+        .width();
     let gutter = char_w * 8.0;
     let body_left = rect.left() + gutter;
     let row_rect = |from: u16, to: u16| {
@@ -93,7 +106,11 @@ fn draw(ui: &mut egui::Ui, state: &mut AppState, theme: &Theme, scroll: Scroll) 
         let y = rect.top() + i as f32 * row_h;
         let hour = i % 4 == 0;
         let label_color = if hour { theme.fg } else { theme.dim };
-        let label = if hour || i % 2 == 0 { Slot(i).label() } else { "     ".into() };
+        let label = if hour || i % 2 == 0 {
+            Slot(i).label()
+        } else {
+            "     ".into()
+        };
         painter.text(
             pos2(rect.left(), y + row_h / 2.0),
             Align2::LEFT_CENTER,
@@ -102,7 +119,11 @@ fn draw(ui: &mut egui::Ui, state: &mut AppState, theme: &Theme, scroll: Scroll) 
             color(label_color),
         );
         if hour && i > 0 {
-            painter.hline(body_left..=rect.right(), y, Stroke::new(1.0, faded(theme.dim, 0.5)));
+            painter.hline(
+                body_left..=rect.right(),
+                y,
+                Stroke::new(1.0, faded(theme.dim, 0.5)),
+            );
         }
     }
 
@@ -126,14 +147,20 @@ fn draw(ui: &mut egui::Ui, state: &mut AppState, theme: &Theme, scroll: Scroll) 
     for (idx, block) in state.day.blocks().iter().enumerate() {
         let r = row_rect(block.start.0, block.end.0);
         // 1 px shy top and bottom so adjacent blocks show a seam.
-        let body = Rect::from_min_max(pos2(r.left(), r.top() + 1.0), pos2(r.right(), r.bottom() - 1.0));
+        let body = Rect::from_min_max(
+            pos2(r.left(), r.top() + 1.0),
+            pos2(r.right(), r.bottom() - 1.0),
+        );
         let fill = theme.block_fill(block.kind);
         let alpha = if moving == Some(idx) { 0.5 } else { 1.0 };
         let ink = faded(theme.text_on(fill), alpha);
         painter.rect_filled(body, 0.0, faded(fill, alpha));
 
         // Corner marker, top-right.
-        let m = Rect::from_min_size(pos2(body.right() - inset - mark, body.top() + inset), vec2(mark, mark));
+        let m = Rect::from_min_size(
+            pos2(body.right() - inset - mark, body.top() + inset),
+            vec2(mark, mark),
+        );
         match marker(block.kind) {
             Marker::Circle => {
                 painter.circle_filled(m.center(), mark / 2.0, ink);
@@ -165,19 +192,30 @@ fn draw(ui: &mut egui::Ui, state: &mut AppState, theme: &Theme, scroll: Scroll) 
         );
     }
     if editing.is_some() {
-        ui.ctx().request_repaint_after(std::time::Duration::from_millis(250));
+        ui.ctx()
+            .request_repaint_after(std::time::Duration::from_millis(250));
     }
 
     // Move ghost: where the dragged block would land.
     if let Some((start, end)) = state.move_preview() {
-        painter.rect_stroke(row_rect(start.0, end.0), 0.0, accent(1.5), StrokeKind::Inside);
+        painter.rect_stroke(
+            row_rect(start.0, end.0),
+            0.0,
+            accent(1.5),
+            StrokeKind::Inside,
+        );
     }
 
     // Task drop target: exactly the range `drop_task` would fill (nothing if occupied).
     if response.dnd_hover_payload::<TaskDrag>().is_some()
         && let Some((start, end)) = pointer_slot.and_then(|slot| state.drop_range(slot))
     {
-        painter.rect_stroke(row_rect(start.0, end.0), 0.0, accent(1.5), StrokeKind::Inside);
+        painter.rect_stroke(
+            row_rect(start.0, end.0),
+            0.0,
+            accent(1.5),
+            StrokeKind::Inside,
+        );
     }
 
     // Now line.
@@ -187,7 +225,8 @@ fn draw(ui: &mut egui::Ui, state: &mut AppState, theme: &Theme, scroll: Scroll) 
         let red = color(theme.error);
         painter.hline(body_left..=rect.right(), y, Stroke::new(2.0, red));
         painter.circle_filled(pos2(body_left, y), 4.0, red);
-        ui.ctx().request_repaint_after(std::time::Duration::from_secs(60 - now.second() as u64));
+        ui.ctx()
+            .request_repaint_after(std::time::Duration::from_secs(60 - now.second() as u64));
     }
 
     // Cursor: outline the whole block it is in, or just its row on a free slot.
@@ -195,7 +234,12 @@ fn draw(ui: &mut egui::Ui, state: &mut AppState, theme: &Theme, scroll: Scroll) 
     match state.day.block_at(state.cursor) {
         Some(i) => {
             let b = &state.day.blocks()[i];
-            painter.rect_stroke(row_rect(b.start.0, b.end.0), 0.0, accent(2.0), StrokeKind::Inside);
+            painter.rect_stroke(
+                row_rect(b.start.0, b.end.0),
+                0.0,
+                accent(2.0),
+                StrokeKind::Inside,
+            );
         }
         None => {
             painter.rect_stroke(cursor_rect, 0.0, accent(1.5), StrokeKind::Inside);
@@ -211,17 +255,27 @@ fn draw(ui: &mut egui::Ui, state: &mut AppState, theme: &Theme, scroll: Scroll) 
     match scroll {
         Scroll::None => {}
         Scroll::Cursor => {
-            let full_row = Rect::from_min_max(pos2(rect.left(), cursor_rect.top()), cursor_rect.max);
+            let full_row =
+                Rect::from_min_max(pos2(rect.left(), cursor_rect.top()), cursor_rect.max);
             ui.scroll_to_rect(full_row.expand2(vec2(0.0, row_h * 2.0)), None);
         }
         Scroll::Start => {
             let r = row_rect(START_SLOT.0, START_SLOT.0 + 1);
-            ui.scroll_to_rect(Rect::from_min_max(pos2(rect.left(), r.top()), r.max), Some(Align::Min));
+            ui.scroll_to_rect(
+                Rect::from_min_max(pos2(rect.left(), r.top()), r.max),
+                Some(Align::Min),
+            );
         }
     }
 }
 
-fn handle_mouse(ui: &egui::Ui, state: &mut AppState, response: &egui::Response, top: f32, row_h: f32) {
+fn handle_mouse(
+    ui: &egui::Ui,
+    state: &mut AppState,
+    response: &egui::Response,
+    top: f32,
+    row_h: f32,
+) {
     let today = super::today();
     let finish_edit = |state: &mut AppState| {
         if matches!(state.mode, Mode::EditTitle { .. } | Mode::EditTask { .. }) {
@@ -266,7 +320,11 @@ mod tests {
     #[test]
     fn markers_are_distinct() {
         assert_eq!(
-            [marker(Kind::Standard), marker(Kind::Scheduled), marker(Kind::Deep)],
+            [
+                marker(Kind::Standard),
+                marker(Kind::Scheduled),
+                marker(Kind::Deep)
+            ],
             [Marker::Circle, Marker::Square, Marker::Triangle]
         );
     }
