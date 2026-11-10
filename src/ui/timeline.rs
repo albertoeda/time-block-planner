@@ -35,9 +35,10 @@ pub fn now_offset(t: NaiveTime) -> f32 {
     t.num_seconds_from_midnight() as f32 / 900.0
 }
 
-/// Drag-and-drop payload: a task (by index) dragged onto the timeline.
-#[derive(Clone, Copy)]
-pub struct TaskDrag(pub usize);
+/// Drag-and-drop payload: the title of a task dragged onto the timeline (by value, so it
+/// cannot go stale if the task list changes mid-drag).
+#[derive(Clone)]
+pub struct TaskDrag(pub String);
 
 /// Where the timeline should scroll this frame.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -72,7 +73,7 @@ fn draw(ui: &mut egui::Ui, state: &mut AppState, theme: &Theme, scroll: Scroll) 
     if let Some(payload) = response.dnd_release_payload::<TaskDrag>()
         && let Some(slot) = pointer_slot
     {
-        state.drop_task(payload.0, slot);
+        state.drop_task(&payload.0, slot);
     }
 
     let painter = ui.painter_at(rect);

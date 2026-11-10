@@ -109,7 +109,7 @@ const HELP: &[(&str, &str)] = &[
     ("F1, ?", "this help"),
     ("^+Q", "quit"),
     ("mouse drag", "create or move a block"),
-    ("drag a task", "schedule it as a 1-hour block"),
+    ("drag a task", "schedule it (up to 1 hour)"),
     ("click [ ]", "tick / untick task"),
 ];
 

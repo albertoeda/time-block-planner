@@ -120,7 +120,8 @@ impl AppState {
         match s.store.load_tasks() {
             Ok(tasks) => s.tasks = tasks,
             Err(e) => {
-                s.status = format!("load failed: {e}");
+                let msg = format!("tasks.txt load failed: {e}");
+                s.status = if s.status.is_empty() { msg } else { format!("{} · {msg}", s.status) };
                 s.tasks_load_failed = true;
             }
         }
@@ -160,18 +161,16 @@ impl AppState {
     }
 
     /// Drops a task on the timeline: a one-hour block (clipped by neighbours and the day end).
-    pub fn drop_task(&mut self, task_idx: usize, slot: Slot) {
+    pub fn drop_task(&mut self, title: &str, slot: Slot) {
         if self.mode != Mode::Normal {
             return;
         }
-        let Some(task) = self.tasks.items().get(task_idx) else { return };
-        let title = task.title.clone();
         let Some((start, end)) = self.drop_range(slot) else {
             self.status = "slot occupied".into();
             return;
         };
         self.checkpoint();
-        let block = Block { start, end, kind: Kind::Standard, title };
+        let block = Block { start, end, kind: Kind::Standard, title: title.to_string() };
         match self.day.add(block) {
             Ok(_) => {
                 self.cursor = start;
@@ -1021,13 +1020,23 @@ mod tests {
         let bytes = [0xffu8, 0xfe];
         std::fs::write(&file, bytes).unwrap();
         let mut s = AppState::new(Store { dir: tmp.path().to_path_buf() }, D);
-        assert!(s.status.starts_with("load failed"), "{}", s.status);
+        assert!(s.status.starts_with("tasks.txt load failed"), "{}", s.status);
         s.focus = Focus::Tasks;
         s.apply(Command::New, D);
         s.apply(Command::Text("x".into()), D);
         s.apply(Command::Confirm, D);
         assert!(s.status.starts_with("not saving"), "{}", s.status);
         assert_eq!(std::fs::read(&file).unwrap(), bytes);
+    }
+
+    #[test]
+    fn both_load_errors_reported() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(tmp.path().join(format!("{}.txt", D.format("%Y-%m-%d"))), [0xffu8, 0xfe]).unwrap();
+        std::fs::write(tmp.path().join("tasks.txt"), [0xffu8, 0xfe]).unwrap();
+        let s = AppState::new(Store { dir: tmp.path().to_path_buf() }, D);
+        assert!(s.status.starts_with("load failed"), "{}", s.status);
+        assert!(s.status.contains("tasks.txt load failed"), "{}", s.status);
     }
 
     #[test]
@@ -1105,12 +1114,12 @@ mod tests {
         s.day
             .add(Block { start: Slot(42), end: Slot(44), kind: Kind::Deep, title: String::new() })
             .unwrap();
-        s.drop_task(0, Slot(40));
+        s.drop_task("a", Slot(40));
         let i = s.day.block_at(Slot(40)).unwrap();
         assert_eq!((s.day.blocks()[i].end, s.day.blocks()[i].title.as_str()), (Slot(42), "a"));
         assert_eq!((s.cursor, s.focus), (Slot(40), Focus::Timeline));
         assert_eq!(s.day.blocks().len(), 2);
-        s.drop_task(0, Slot(43));
+        s.drop_task("a", Slot(43));
         assert_eq!(s.status, "slot occupied");
         assert_eq!(s.day.blocks().len(), 2);
     }
@@ -1118,7 +1127,7 @@ mod tests {
     #[test]
     fn drop_task_clamps_at_day_end() {
         let (_t, mut s) = st_tasks("- [ ] a\n");
-        s.drop_task(0, Slot(95));
+        s.drop_task("a", Slot(95));
         assert_eq!((s.day.blocks()[0].start, s.day.blocks()[0].end), (Slot(95), Slot(96)));
     }
 
@@ -1126,7 +1135,7 @@ mod tests {
     fn drop_task_ignored_outside_normal_mode() {
         let (_t, mut s) = st_tasks("- [ ] a\n");
         s.apply(Command::New, D);
-        s.drop_task(0, Slot(40));
+        s.drop_task("a", Slot(40));
         assert!(s.day.blocks().is_empty());
         s.apply(Command::Cancel, D);
         assert_eq!(s.tasks.len(), 1);

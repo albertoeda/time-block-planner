@@ -70,7 +70,7 @@ pub fn serialize_day(day: &Day) -> String {
     out
 }
 
-/// Data folder: CLI arg > `TBP_DIR` > `<Documents>/time-block-planner` > `<home>/time-block-planner`.
+/// Parses tasks.txt leniently: indent gives depth, `- [ ]`/`- [x]` markers give state.
 pub fn parse_tasks(text: &str) -> TaskList {
     let text = text.strip_prefix('\u{feff}').unwrap_or(text);
     let mut items = Vec::new();
@@ -84,7 +84,12 @@ pub fn parse_tasks(text: &str) -> TaskList {
             .map(|c| if c == '\t' { 2 } else { 1 })
             .sum();
         let rest = line.trim_start_matches([' ', '\t']);
-        let (done, rest) = if let Some(r) = rest.strip_prefix("- [ ] ") {
+        // Editors may trim the trailing space of an empty task: `- [ ]` alone.
+        let (done, rest) = if rest == "- [ ]" {
+            (false, "")
+        } else if rest == "- [x]" || rest == "- [X]" {
+            (true, "")
+        } else if let Some(r) = rest.strip_prefix("- [ ] ") {
             (false, r)
         } else if let Some(r) = rest
             .strip_prefix("- [x] ")
@@ -100,6 +105,7 @@ pub fn parse_tasks(text: &str) -> TaskList {
     TaskList::from_items(items)
 }
 
+/// Renders the task list in the canonical `- [ ] title` format.
 pub fn serialize_tasks(list: &TaskList) -> String {
     let mut out = String::new();
     for t in list.items() {
@@ -111,6 +117,7 @@ pub fn serialize_tasks(list: &TaskList) -> String {
     out
 }
 
+/// Data folder: CLI arg > `TBP_DIR` > `<Documents>/time-block-planner` > `<home>/time-block-planner`.
 pub fn resolve_dir(cli: Option<PathBuf>) -> PathBuf {
     if let Some(p) = cli {
         return p;
@@ -311,6 +318,15 @@ mod tests {
         assert!(l.items()[1].done);
         assert_eq!(l.items()[2].depth, 1);
         assert_eq!(serialize_tasks(&l), txt);
+    }
+
+    #[test]
+    fn parse_tasks_bare_markers_are_empty_tasks() {
+        let l = parse_tasks("- [x]
+- [ ]
+");
+        let got: Vec<_> = l.items().iter().map(|t| (t.done, t.title.as_str())).collect();
+        assert_eq!(got, [(true, ""), (false, "")]);
     }
 
     #[test]

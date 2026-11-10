@@ -33,7 +33,7 @@ pub fn show(ui: &mut egui::Ui, state: &mut AppState, theme: &Theme) {
         }
         egui::ScrollArea::vertical().auto_shrink(false).show(ui, |ui| draw(ui, state, theme));
     });
-    drag_ghost(ui.ctx(), state, theme);
+    drag_ghost(ui.ctx(), theme);
 }
 
 fn draw(ui: &mut egui::Ui, state: &mut AppState, theme: &Theme) {
@@ -94,7 +94,7 @@ fn draw(ui: &mut egui::Ui, state: &mut AppState, theme: &Theme) {
             clicked = Some((idx, on_checkbox));
         }
         if response.drag_started() && state.mode == Mode::Normal {
-            DragAndDrop::set_payload(ui.ctx(), TaskDrag(idx));
+            DragAndDrop::set_payload(ui.ctx(), TaskDrag(task.title.clone()));
         }
     }
     if editing.is_some() {
@@ -109,14 +109,12 @@ fn draw(ui: &mut egui::Ui, state: &mut AppState, theme: &Theme) {
 }
 
 /// While a task is being dragged, paint its title beside the pointer, above everything.
-fn drag_ghost(ctx: &egui::Context, state: &AppState, theme: &Theme) {
+fn drag_ghost(ctx: &egui::Context, theme: &Theme) {
     let Some(drag) = DragAndDrop::payload::<TaskDrag>(ctx) else { return };
-    let (Some(task), Some(pointer)) = (state.tasks.items().get(drag.0), ctx.pointer_latest_pos()) else {
-        return;
-    };
+    let Some(pointer) = ctx.pointer_latest_pos() else { return };
     let font = TextStyle::Monospace.resolve(&ctx.global_style());
     let painter = ctx.layer_painter(LayerId::new(Order::Tooltip, Id::unique("task-drag")));
-    let (_, title) = task_row_text(task);
+    let title = if drag.0.is_empty() { "(untitled)".to_string() } else { drag.0.clone() };
     let galley = painter.layout_no_wrap(title, font, color(theme.fg));
     let pad = 3.0;
     let rect = Rect::from_min_size(pointer + vec2(14.0, 4.0), galley.size()).expand(pad);
