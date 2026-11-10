@@ -10,7 +10,7 @@ use crate::model::{Block, Day, Kind, Slot};
 use crate::tasks::{Task, TaskList};
 
 const UNPARSED_HEADER: &str = "# unparsed lines kept by time-block-planner";
-const APP_DIR: &str = "time-block-planner";
+const APP_DIR: &str = ".time-block-planner";
 
 /// Parses a day file. Lines that are not valid, non-overlapping blocks are kept in `unparsed`.
 pub fn parse_day(text: &str) -> Day {
@@ -126,7 +126,7 @@ pub fn serialize_tasks(list: &TaskList) -> String {
     out
 }
 
-/// Data folder: CLI arg > `TBP_DIR` > `<Documents>/time-block-planner` > `<home>/time-block-planner`.
+/// Data folder: CLI arg > `TBP_DIR` > `<home>/.time-block-planner`.
 pub fn resolve_dir(cli: Option<PathBuf>) -> PathBuf {
     if let Some(p) = cli {
         return p;
@@ -134,8 +134,7 @@ pub fn resolve_dir(cli: Option<PathBuf>) -> PathBuf {
     if let Some(p) = std::env::var_os("TBP_DIR").filter(|v| !v.is_empty()) {
         return PathBuf::from(p);
     }
-    dirs::document_dir()
-        .or_else(dirs::home_dir)
+    dirs::home_dir()
         .unwrap_or_else(|| PathBuf::from("."))
         .join(APP_DIR)
 }

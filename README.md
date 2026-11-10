@@ -14,7 +14,7 @@ On Linux, install `libxkbcommon-dev libgtk-3-dev libxcb-render0-dev libxcb-shape
 
 ## Data folder
 
-Plans are saved automatically after every change, to `<Documents>/time-block-planner/`. You can override the folder:
+Plans are saved automatically after every change, to `.time-block-planner/` in your home folder (`C:\Users\<you>\.time-block-planner\` on Windows, `~/.time-block-planner/` on macOS and Linux). You can override the folder:
 
 - `TBP_DIR=/path/to/folder`
 - `time-block-planner --dir /path/to/folder` (takes priority)
