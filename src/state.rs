@@ -74,6 +74,9 @@ pub enum Command {
     Indent,
     Outdent,
     ScheduleTask,
+    /// Move the selected task (and its subtasks) to the previous / next day's list.
+    MoveTaskToPrevDay,
+    MoveTaskToNextDay,
     /// Focus the given pane.
     FocusPane(Focus),
     Undo,
@@ -470,6 +473,8 @@ impl AppState {
                     is_new: false,
                 };
             }
+            Command::MoveTaskToPrevDay => self.move_task_to_day(self.date.pred_opt()),
+            Command::MoveTaskToNextDay => self.move_task_to_day(self.date.succ_opt()),
             Command::Delete => self.edit_task(|t, i| {
                 t.remove(i);
                 Some(i)
@@ -501,6 +506,44 @@ impl AppState {
                 self.save();
             }
             None => self.status = "can't move there".into(),
+        }
+    }
+
+    /// Moves the selected task and its subtasks to the end of another day's list, staying on
+    /// the current day. One undo step restores both days. The other day is written first, so
+    /// a failure part-way can duplicate the task but never lose it.
+    fn move_task_to_day(&mut self, target: Option<NaiveDate>) {
+        let Some(idx) = self.selected_task() else {
+            return;
+        };
+        let Some(target) = target else {
+            self.status = "no such day".into();
+            return;
+        };
+        if self.load_failed {
+            self.status = format!("not saving: {} could not be read", self.date);
+            return;
+        }
+        let (other_day, mut other) = match self.store.load_day(target) {
+            Ok(loaded) => loaded,
+            Err(e) => {
+                self.status = format!("load failed: {e}");
+                return;
+            }
+        };
+        let saved = vec![(self.date, self.tasks.clone()), (target, other.clone())];
+        let sub = self.tasks.take_subtree(idx);
+        other.append_subtree(sub);
+        if let Err(e) = self.store.save_day(target, &other_day, &other) {
+            self.tasks = saved[0].1.clone();
+            self.status = format!("save failed: {e}");
+            return;
+        }
+        self.push_history(Snapshot::Tasks(saved));
+        self.task_sel = idx.min(self.tasks.len().saturating_sub(1));
+        self.save();
+        if self.status.is_empty() {
+            self.status = format!("moved to {target}");
         }
     }
 
@@ -1558,5 +1601,101 @@ mod tests {
         assert!(!s.store.load_day(D).unwrap().1.items()[0].done);
         s.apply(Command::Redo, D);
         assert!(s.tasks.items()[0].done);
+    }
+
+    fn tasks_text(s: &AppState) -> String {
+        crate::storage::serialize_tasks(&s.tasks)
+    }
+
+    fn saved_tasks(s: &AppState, date: NaiveDate) -> String {
+        crate::storage::serialize_tasks(&s.store.load_day(date).unwrap().1)
+    }
+
+    #[test]
+    fn move_task_to_next_day_takes_subtasks_and_undoes_in_one_step() {
+        let (t, mut s) = st_tasks("- [ ] a\n- [ ] b\n  - [ ] b1\n- [ ] c\n");
+        let next = D.succ_opt().unwrap();
+        std::fs::write(t.path().join("2026-11-11.txt"), "[tasks]\n- [ ] x\n").unwrap();
+        s.task_sel = 1;
+        s.apply(Command::MoveTaskToNextDay, D);
+        assert_eq!(s.date, D);
+        assert_eq!(tasks_text(&s), "- [ ] a\n- [ ] c\n");
+        assert_eq!(s.selected_task(), Some(1));
+        assert_eq!(s.status, "moved to 2026-11-11");
+        assert_eq!(saved_tasks(&s, next), "- [ ] x\n- [ ] b\n  - [ ] b1\n");
+        assert_eq!(saved_tasks(&s, D), "- [ ] a\n- [ ] c\n");
+
+        s.apply(Command::Undo, D);
+        assert_eq!(tasks_text(&s), "- [ ] a\n- [ ] b\n  - [ ] b1\n- [ ] c\n");
+        assert_eq!(saved_tasks(&s, next), "- [ ] x\n");
+
+        s.apply(Command::Redo, D);
+        assert_eq!(tasks_text(&s), "- [ ] a\n- [ ] c\n");
+        assert_eq!(saved_tasks(&s, next), "- [ ] x\n- [ ] b\n  - [ ] b1\n");
+    }
+
+    #[test]
+    fn move_task_keeps_the_other_days_blocks() {
+        let (t, mut s) = st_tasks("- [ ] a\n");
+        std::fs::write(
+            t.path().join("2026-11-11.txt"),
+            "09:00-09:15 deep x\n\n[tasks]\n- [ ] y\n",
+        )
+        .unwrap();
+        s.apply(Command::MoveTaskToNextDay, D);
+        let (day, tasks) = s.store.load_day(D.succ_opt().unwrap()).unwrap();
+        assert_eq!(day.blocks().len(), 1);
+        assert_eq!(
+            crate::storage::serialize_tasks(&tasks),
+            "- [ ] y\n- [ ] a\n"
+        );
+    }
+
+    #[test]
+    fn move_task_to_prev_day_rebases_depth_and_deletes_empty_source() {
+        let (t, mut s) = st_tasks("- [ ] p\n  - [ ] c\n");
+        let prev = D.pred_opt().unwrap();
+        s.task_sel = 1;
+        s.apply(Command::MoveTaskToPrevDay, D);
+        assert_eq!(tasks_text(&s), "- [ ] p\n");
+        assert_eq!(saved_tasks(&s, prev), "- [ ] c\n");
+        // Moving the last task empties today's list (no blocks), so its file goes away.
+        s.task_sel = 0;
+        s.apply(Command::MoveTaskToPrevDay, D);
+        assert!(s.tasks.is_empty());
+        assert!(!t.path().join(D_FILE).exists());
+    }
+
+    #[test]
+    fn move_task_needs_a_selected_task() {
+        let (t, mut s) = st_tasks("- [ ] a\n");
+        s.task_sel = 1; // the "+ new task" row
+        s.apply(Command::MoveTaskToNextDay, D);
+        assert_eq!(tasks_text(&s), "- [ ] a\n");
+        assert!(!t.path().join("2026-11-11.txt").exists());
+        assert!(s.status.is_empty(), "{}", s.status);
+    }
+
+    #[test]
+    fn move_task_refuses_when_other_day_is_unreadable() {
+        let (t, mut s) = st_tasks("- [ ] a\n");
+        let file = t.path().join("2026-11-11.txt");
+        std::fs::write(&file, [0xffu8, 0xfe]).unwrap();
+        s.apply(Command::MoveTaskToNextDay, D);
+        assert!(s.status.starts_with("load failed"), "{}", s.status);
+        assert_eq!(tasks_text(&s), "- [ ] a\n");
+        assert_eq!(std::fs::read(&file).unwrap(), [0xffu8, 0xfe]);
+    }
+
+    #[test]
+    fn move_task_is_ignored_while_typing_and_in_timeline() {
+        let (_t, mut s) = st_tasks("- [ ] a\n");
+        s.apply(Command::EditTitle, D);
+        s.apply(Command::MoveTaskToNextDay, D);
+        assert_eq!(s.tasks.len(), 1);
+        s.apply(Command::Cancel, D);
+        s.focus = Focus::Timeline;
+        s.apply(Command::MoveTaskToNextDay, D);
+        assert_eq!(s.tasks.len(), 1);
     }
 }
