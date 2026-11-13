@@ -135,6 +135,23 @@ impl TaskList {
         self.items[i..next_end].rotate_left(end - i);
         Some(i + (next_end - end))
     }
+
+    /// Removes the subtree rooted at `i` and returns it, with depths rebased so `i` is 0.
+    pub fn take_subtree(&mut self, i: usize) -> Vec<Task> {
+        let end = self.subtree_end(i);
+        let base = self.items[i].depth;
+        let mut sub: Vec<Task> = self.items.drain(i..end).collect();
+        sub.iter_mut().for_each(|t| t.depth -= base);
+        sub
+    }
+
+    /// Appends a subtree (root first, root depth 0) at the end of the list as a top-level task.
+    /// Returns the root's index.
+    pub fn append_subtree(&mut self, sub: Vec<Task>) -> usize {
+        let at = self.items.len();
+        self.items.extend(sub);
+        at
+    }
 }
 
 #[cfg(test)]
@@ -213,5 +230,32 @@ mod tests {
         assert!(l.items()[0].done);
         l.set_title(0, " x\ny ");
         assert_eq!(l.items()[0].title, "x y");
+    }
+    #[test]
+    fn take_subtree_rebases_depth() {
+        let mut l = list(&[(0, "a"), (1, "b"), (2, "b1"), (1, "c"), (0, "d")]);
+        let sub = l.take_subtree(1);
+        let got: Vec<_> = sub.iter().map(|t| (t.depth, t.title.as_str())).collect();
+        assert_eq!(got, [(0, "b"), (1, "b1")]);
+        assert_eq!(titles(&l), [(0, "a"), (1, "c"), (0, "d")]);
+    }
+    #[test]
+    fn append_subtree_goes_to_the_end_at_top_level() {
+        let mut l = list(&[(0, "x"), (1, "x1")]);
+        let at = l.append_subtree(vec![
+            Task {
+                title: "b".into(),
+                done: true,
+                depth: 0,
+            },
+            Task {
+                title: "b1".into(),
+                done: false,
+                depth: 1,
+            },
+        ]);
+        assert_eq!(at, 2);
+        assert_eq!(titles(&l), [(0, "x"), (1, "x1"), (0, "b"), (1, "b1")]);
+        assert!(l.items()[2].done);
     }
 }
