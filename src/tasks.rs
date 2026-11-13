@@ -148,6 +148,7 @@ impl TaskList {
     /// Appends a subtree (root first, root depth 0) at the end of the list as a top-level task.
     /// Returns the root's index.
     pub fn append_subtree(&mut self, sub: Vec<Task>) -> usize {
+        debug_assert!(sub.first().is_none_or(|t| t.depth == 0));
         let at = self.items.len();
         self.items.extend(sub);
         at

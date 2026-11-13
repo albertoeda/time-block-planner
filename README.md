@@ -31,11 +31,11 @@ Each day is one plaintext file, `YYYY-MM-DD.txt`, holding that day's time blocks
   - [x] Find the number
 ```
 
-`HH:MM-HH:MM <kind> <title>`, on a 15-minute grid. `24:00` is allowed as an end time. Lines starting with `#` are comments; they are kept, moved to the top of the file when the app saves that day. You can edit the files by hand. Lines the app can't read (for example, off-grid times or overlaps) are kept at the end of the file under `# unparsed lines kept by time-block-planner`; they are never deleted. If a day has no blocks and no tasks, its file is deleted.
+`HH:MM-HH:MM <kind> <title>`, on a 15-minute grid. `24:00` is allowed as an end time. Lines starting with `#` are comments; they are kept, moved to the top of the file when the app saves that day. You can edit the files by hand. Lines the app can't read (for example, off-grid times or overlaps) are kept at the end of the file under `# unparsed lines kept by time-block-planner`; they are never deleted. If a day has no blocks, comments, unparsed lines or tasks, its file is deleted.
 
 `config.txt` in the same folder stores the chosen theme (`theme=rose-pine`).
 
-The tasks after `[tasks]` are a nested Markdown checklist, one list per day:
+The tasks after `[tasks]` are a nested Markdown checklist, one list per day. The app reads everything after the `[tasks]` line as tasks, so a block line or `#` comment placed there becomes a task titled with that line:
 
 - Each level of nesting is two spaces of indentation; a tab counts as two spaces.
 - `- [ ] ` marks an open task and `- [x] ` (or `- [X] `) a done one. Any other non-blank line becomes an open task, with the line as its title.

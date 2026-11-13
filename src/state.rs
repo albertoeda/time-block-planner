@@ -531,17 +531,24 @@ impl AppState {
                 return;
             }
         };
-        let saved = vec![(self.date, self.tasks.clone()), (target, other.clone())];
+        let before = self.tasks.clone();
+        let saved = vec![(self.date, before.clone()), (target, other.clone())];
         let sub = self.tasks.take_subtree(idx);
         other.append_subtree(sub);
         if let Err(e) = self.store.save_day(target, &other_day, &other) {
-            self.tasks = saved[0].1.clone();
+            self.tasks = before;
             self.status = format!("save failed: {e}");
             return;
         }
         self.push_history(Snapshot::Tasks(saved));
         self.task_sel = idx.min(self.tasks.len().saturating_sub(1));
         self.save();
+        if self.status.starts_with("save failed") {
+            self.status = format!(
+                "save failed (task also copied to {target}): {}",
+                self.status.trim_start_matches("save failed: ")
+            );
+        }
         if self.status.is_empty() {
             self.status = format!("moved to {target}");
         }
@@ -758,31 +765,40 @@ impl AppState {
     }
 
     /// Puts each saved task list in place for its date and returns the lists it replaced, as a
-    /// snapshot for the opposite stack. Then shows the first entry's day. Fails, changing
-    /// nothing, when another day's file can't be read.
+    /// snapshot for the opposite stack. Then shows the first entry's day. Fails when another
+    /// day's file can't be read, or when a write fails. Days that gain tasks are written
+    /// before days that lose tasks, so a failure part-way can duplicate a task but never lose
+    /// it. It stops at the first failed write; the current day's list in memory changes only
+    /// after its own write succeeds.
     fn swap_tasks(&mut self, saved: &[(NaiveDate, TaskList)]) -> Result<Snapshot, String> {
+        debug_assert!(!saved.is_empty());
+        if self.load_failed && saved.iter().any(|(date, _)| *date == self.date) {
+            return Err(format!("not saving: {} could not be read", self.date));
+        }
         let mut current = Vec::new();
-        let mut other_days = Vec::new();
+        let mut days = Vec::new();
         for (date, _) in saved {
             if *date == self.date {
                 current.push((*date, self.tasks.clone()));
+                days.push(self.day.clone());
             } else {
                 let (day, tasks) = self
                     .store
                     .load_day(*date)
                     .map_err(|e| format!("load failed: {e}"))?;
                 current.push((*date, tasks));
-                other_days.push((*date, day));
+                days.push(day);
             }
         }
-        for (date, list) in saved {
+        let mut order: Vec<usize> = (0..saved.len()).collect();
+        order.sort_by_key(|&i| saved[i].1.len() < current[i].1.len());
+        for i in order {
+            let (date, list) = &saved[i];
+            self.store
+                .save_day(*date, &days[i], list)
+                .map_err(|e| format!("save failed: {e}"))?;
             if *date == self.date {
                 self.tasks = list.clone();
-                self.save();
-            } else if let Some((_, day)) = other_days.iter().find(|(d, _)| d == date)
-                && let Err(e) = self.store.save_day(*date, day, list)
-            {
-                self.status = format!("save failed: {e}");
             }
         }
         let first = saved[0].0;
@@ -1685,6 +1701,70 @@ mod tests {
         assert!(s.status.starts_with("load failed"), "{}", s.status);
         assert_eq!(tasks_text(&s), "- [ ] a\n");
         assert_eq!(std::fs::read(&file).unwrap(), [0xffu8, 0xfe]);
+    }
+
+    #[test]
+    fn redoing_a_move_with_a_failing_target_write_does_not_lose_the_task() {
+        let (t, mut s) = st_tasks(
+            "- [ ] a
+- [ ] b
+",
+        );
+        let next = D.succ_opt().unwrap();
+        s.task_sel = 1;
+        s.apply(Command::MoveTaskToNextDay, D);
+        s.apply(Command::Undo, D);
+        assert_eq!(s.future.len(), 1);
+        // A directory where the temporary file goes makes every write to that day fail.
+        std::fs::create_dir(t.path().join("2026-11-11.txt.tmp")).unwrap();
+        s.apply(Command::Redo, D);
+        assert!(s.status.starts_with("save failed"), "{}", s.status);
+        assert_eq!(
+            tasks_text(&s),
+            "- [ ] a
+- [ ] b
+"
+        );
+        assert_eq!(
+            saved_tasks(&s, D),
+            "- [ ] a
+- [ ] b
+"
+        );
+        assert_eq!(saved_tasks(&s, next), "");
+        assert_eq!(s.future.len(), 1);
+        // Once the write works again, the same redo goes through.
+        std::fs::remove_dir(t.path().join("2026-11-11.txt.tmp")).unwrap();
+        s.apply(Command::Redo, D);
+        assert_eq!(
+            saved_tasks(&s, D),
+            "- [ ] a
+"
+        );
+        assert_eq!(
+            saved_tasks(&s, next),
+            "- [ ] b
+"
+        );
+    }
+
+    #[test]
+    fn undo_of_a_task_edit_refuses_when_the_current_day_is_unreadable() {
+        let (t, mut s) = st_tasks(
+            "- [ ] a
+",
+        );
+        s.history
+            .push(Snapshot::Tasks(vec![(D, TaskList::default())]));
+        let file = t.path().join(D_FILE);
+        std::fs::write(&file, [0xffu8, 0xfe]).unwrap();
+        s.load_current();
+        assert!(s.load_failed);
+        s.apply(Command::Undo, D);
+        assert!(s.status.starts_with("not saving"), "{}", s.status);
+        assert_eq!(std::fs::read(&file).unwrap(), [0xffu8, 0xfe]);
+        assert_eq!(s.history.len(), 1);
+        assert!(s.future.is_empty());
     }
 
     #[test]
