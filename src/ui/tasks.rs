@@ -212,7 +212,11 @@ mod tests {
     fn pane_widths(tasks_txt: &str, frames: usize) -> Vec<f32> {
         let tmp = tempfile::tempdir().unwrap();
         if !tasks_txt.is_empty() {
-            std::fs::write(tmp.path().join("tasks.txt"), tasks_txt).unwrap();
+            std::fs::write(
+                tmp.path().join("2026-11-10.txt"),
+                format!("[tasks]\n{tasks_txt}"),
+            )
+            .unwrap();
         }
         let date = chrono::NaiveDate::from_ymd_opt(2026, 11, 10).unwrap();
         let mut state = AppState::new(

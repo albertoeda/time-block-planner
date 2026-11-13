@@ -74,6 +74,9 @@ pub enum Command {
     Indent,
     Outdent,
     ScheduleTask,
+    /// Move the selected task (and its subtasks) to the previous / next day's list.
+    MoveTaskToPrevDay,
+    MoveTaskToNextDay,
     /// Focus the given pane.
     FocusPane(Focus),
     Undo,
@@ -104,14 +107,13 @@ pub struct AppState {
     future: Vec<Snapshot>,
     /// The current date's file could not be read; never write it, or we'd destroy it.
     load_failed: bool,
-    /// Same for tasks.txt.
-    tasks_load_failed: bool,
 }
 
-/// One undoable state: a day (with its date) or the whole task list.
+/// One undoable state: a day's blocks (with its date), or the task lists of one or more days.
+/// For `Tasks`, the first entry is the day to show after undo/redo.
 enum Snapshot {
     Day(NaiveDate, Day),
-    Tasks(TaskList),
+    Tasks(Vec<(NaiveDate, TaskList)>),
 }
 
 impl AppState {
@@ -132,21 +134,8 @@ impl AppState {
             history: Vec::new(),
             future: Vec::new(),
             load_failed: false,
-            tasks_load_failed: false,
         };
         s.load_current();
-        match s.store.load_tasks() {
-            Ok(tasks) => s.tasks = tasks,
-            Err(e) => {
-                let msg = format!("tasks.txt load failed: {e}");
-                s.status = if s.status.is_empty() {
-                    msg
-                } else {
-                    format!("{} · {msg}", s.status)
-                };
-                s.tasks_load_failed = true;
-            }
-        }
         s
     }
 
@@ -260,17 +249,7 @@ impl AppState {
             self.status = format!("not saving: {} could not be read", self.date);
             return;
         }
-        if let Err(e) = self.store.save_day(self.date, &self.day) {
-            self.status = format!("save failed: {e}");
-        }
-    }
-
-    pub fn save_tasks(&mut self) {
-        if self.tasks_load_failed {
-            self.status = "not saving: tasks.txt could not be read".into();
-            return;
-        }
-        if let Err(e) = self.store.save_tasks(&self.tasks) {
+        if let Err(e) = self.store.save_day(self.date, &self.day, &self.tasks) {
             self.status = format!("save failed: {e}");
         }
     }
@@ -381,12 +360,12 @@ impl AppState {
                     let buf = std::mem::take(&mut self.title_buf);
                     self.tasks.set_title(idx, &buf);
                     self.mode = Mode::Normal;
-                    self.save_tasks();
+                    self.save();
                 }
                 Command::Cancel => {
-                    if is_new && let Some(Snapshot::Tasks(list)) = self.history.pop() {
-                        self.tasks = list;
-                        self.save_tasks();
+                    if is_new && let Some(Snapshot::Tasks(mut saved)) = self.history.pop() {
+                        self.tasks = saved.remove(0).1;
+                        self.save();
                     }
                     self.title_buf.clear();
                     self.mode = Mode::Normal;
@@ -433,9 +412,6 @@ impl AppState {
             Command::Redo => self.time_travel(false),
             Command::SaveNow => {
                 self.save();
-                if self.status.is_empty() {
-                    self.save_tasks();
-                }
                 if self.status.is_empty() {
                     self.status = "saved".into();
                 }
@@ -497,6 +473,8 @@ impl AppState {
                     is_new: false,
                 };
             }
+            Command::MoveTaskToPrevDay => self.move_task_to_day(self.date.pred_opt()),
+            Command::MoveTaskToNextDay => self.move_task_to_day(self.date.succ_opt()),
             Command::Delete => self.edit_task(|t, i| {
                 t.remove(i);
                 Some(i)
@@ -522,12 +500,57 @@ impl AppState {
         let before = self.tasks.clone();
         match op(&mut self.tasks, idx) {
             Some(new_idx) => {
-                self.push_history(Snapshot::Tasks(before));
+                self.push_history(Snapshot::Tasks(vec![(self.date, before)]));
                 // Stay on a task (e.g. after deleting the last one) unless none are left.
                 self.task_sel = new_idx.min(self.tasks.len().saturating_sub(1));
-                self.save_tasks();
+                self.save();
             }
             None => self.status = "can't move there".into(),
+        }
+    }
+
+    /// Moves the selected task and its subtasks to the end of another day's list, staying on
+    /// the current day. One undo step restores both days. The other day is written first, so
+    /// a failure part-way can duplicate the task but never lose it.
+    fn move_task_to_day(&mut self, target: Option<NaiveDate>) {
+        let Some(idx) = self.selected_task() else {
+            return;
+        };
+        let Some(target) = target else {
+            self.status = "no such day".into();
+            return;
+        };
+        if self.load_failed {
+            self.status = format!("not saving: {} could not be read", self.date);
+            return;
+        }
+        let (other_day, mut other) = match self.store.load_day(target) {
+            Ok(loaded) => loaded,
+            Err(e) => {
+                self.status = format!("load failed: {e}");
+                return;
+            }
+        };
+        let before = self.tasks.clone();
+        let saved = vec![(self.date, before.clone()), (target, other.clone())];
+        let sub = self.tasks.take_subtree(idx);
+        other.append_subtree(sub);
+        if let Err(e) = self.store.save_day(target, &other_day, &other) {
+            self.tasks = before;
+            self.status = format!("save failed: {e}");
+            return;
+        }
+        self.push_history(Snapshot::Tasks(saved));
+        self.task_sel = idx.min(self.tasks.len().saturating_sub(1));
+        self.save();
+        if self.status.starts_with("save failed") {
+            self.status = format!(
+                "save failed (task also copied to {target}): {}",
+                self.status.trim_start_matches("save failed: ")
+            );
+        }
+        if self.status.is_empty() {
+            self.status = format!("moved to {target}");
         }
     }
 
@@ -674,7 +697,7 @@ impl AppState {
     }
 
     fn checkpoint_tasks(&mut self) {
-        self.push_history(Snapshot::Tasks(self.tasks.clone()));
+        self.push_history(Snapshot::Tasks(vec![(self.date, self.tasks.clone())]));
     }
 
     fn push_history(&mut self, snap: Snapshot) {
@@ -702,15 +725,26 @@ impl AppState {
         };
         let (date, day) = match snap {
             Snapshot::Day(date, day) => (date, day),
-            Snapshot::Tasks(list) => {
-                let current = Snapshot::Tasks(std::mem::replace(&mut self.tasks, list));
-                if undo {
-                    self.future.push(current)
-                } else {
-                    self.history.push(current)
+            Snapshot::Tasks(saved) => {
+                match self.swap_tasks(&saved) {
+                    Ok(current) => {
+                        if undo {
+                            self.future.push(current)
+                        } else {
+                            self.history.push(current)
+                        }
+                    }
+                    Err(msg) => {
+                        // Nothing was applied: put the snapshot back where it came from.
+                        let back = Snapshot::Tasks(saved);
+                        if undo {
+                            self.history.push(back)
+                        } else {
+                            self.future.push(back)
+                        }
+                        self.status = msg;
+                    }
                 }
-                self.task_sel = self.task_sel.min(self.tasks.len());
-                self.save_tasks();
                 return;
             }
         };
@@ -730,6 +764,52 @@ impl AppState {
         self.save();
     }
 
+    /// Puts each saved task list in place for its date and returns the lists it replaced, as a
+    /// snapshot for the opposite stack. Then shows the first entry's day. Fails when another
+    /// day's file can't be read, or when a write fails. Days that gain tasks are written
+    /// before days that lose tasks, so a failure part-way can duplicate a task but never lose
+    /// it. It stops at the first failed write; the current day's list in memory changes only
+    /// after its own write succeeds.
+    fn swap_tasks(&mut self, saved: &[(NaiveDate, TaskList)]) -> Result<Snapshot, String> {
+        debug_assert!(!saved.is_empty());
+        if self.load_failed && saved.iter().any(|(date, _)| *date == self.date) {
+            return Err(format!("not saving: {} could not be read", self.date));
+        }
+        let mut current = Vec::new();
+        let mut days = Vec::new();
+        for (date, _) in saved {
+            if *date == self.date {
+                current.push((*date, self.tasks.clone()));
+                days.push(self.day.clone());
+            } else {
+                let (day, tasks) = self
+                    .store
+                    .load_day(*date)
+                    .map_err(|e| format!("load failed: {e}"))?;
+                current.push((*date, tasks));
+                days.push(day);
+            }
+        }
+        let mut order: Vec<usize> = (0..saved.len()).collect();
+        order.sort_by_key(|&i| saved[i].1.len() < current[i].1.len());
+        for i in order {
+            let (date, list) = &saved[i];
+            self.store
+                .save_day(*date, &days[i], list)
+                .map_err(|e| format!("save failed: {e}"))?;
+            if *date == self.date {
+                self.tasks = list.clone();
+            }
+        }
+        let first = saved[0].0;
+        if first != self.date {
+            self.date = first;
+            self.load_current();
+        }
+        self.task_sel = self.task_sel.min(self.tasks.len());
+        Ok(Snapshot::Tasks(current))
+    }
+
     /// Edits are saved as they happen, so changing days never writes the day being left.
     fn go_to(&mut self, date: Option<NaiveDate>) {
         let Some(date) = date else { return };
@@ -740,18 +820,23 @@ impl AppState {
         self.load_current();
     }
 
+    /// Loads the current date's blocks and tasks. A file that can't be read is left alone
+    /// (never overwritten) and reported in the status line.
     fn load_current(&mut self) {
         match self.store.load_day(self.date) {
-            Ok(day) => {
+            Ok((day, tasks)) => {
                 self.day = day;
+                self.tasks = tasks;
                 self.load_failed = false;
             }
             Err(e) => {
                 self.status = format!("load failed: {e}");
                 self.day = Day::default();
+                self.tasks = TaskList::default();
                 self.load_failed = true;
             }
         }
+        self.task_sel = 0;
     }
 
     fn move_cursor(&mut self, delta: i32) {
@@ -771,6 +856,7 @@ mod tests {
     use crate::theme::themes;
 
     const D: NaiveDate = NaiveDate::from_ymd_opt(2026, 11, 10).unwrap();
+    const D_FILE: &str = "2026-11-10.txt";
 
     fn st() -> (tempfile::TempDir, AppState) {
         let tmp = tempfile::tempdir().unwrap();
@@ -812,7 +898,7 @@ mod tests {
         s.apply(Command::Confirm, D);
         assert_eq!(s.mode, Mode::Normal);
         assert_eq!(s.day.blocks()[0].title, "Deep sync");
-        assert_eq!(s.store.load_day(D).unwrap(), s.day);
+        assert_eq!(s.store.load_day(D).unwrap().0, s.day);
     }
 
     #[test]
@@ -865,7 +951,7 @@ mod tests {
         s.apply(Command::SetKind(Kind::Scheduled), D);
         assert_eq!(s.day.blocks()[0].kind, Kind::Scheduled);
         assert_eq!(
-            s.store.load_day(D).unwrap().blocks()[0].kind,
+            s.store.load_day(D).unwrap().0.blocks()[0].kind,
             Kind::Scheduled
         );
     }
@@ -906,7 +992,7 @@ mod tests {
         assert!(s.day.blocks().is_empty());
         s.apply(Command::Undo, D);
         assert_eq!(s.day.blocks().len(), 1);
-        assert_eq!(s.store.load_day(D).unwrap().blocks().len(), 1);
+        assert_eq!(s.store.load_day(D).unwrap().0.blocks().len(), 1);
         s.apply(Command::Redo, D);
         assert!(s.day.blocks().is_empty());
     }
@@ -1077,7 +1163,7 @@ mod tests {
 
     fn st_tasks(txt: &str) -> (tempfile::TempDir, AppState) {
         let tmp = tempfile::tempdir().unwrap();
-        std::fs::write(tmp.path().join("tasks.txt"), txt).unwrap();
+        std::fs::write(tmp.path().join(D_FILE), format!("[tasks]\n{txt}")).unwrap();
         let mut s = AppState::new(
             Store {
                 dir: tmp.path().to_path_buf(),
@@ -1099,7 +1185,7 @@ mod tests {
         s.apply(Command::Text("Outline".into()), D);
         s.apply(Command::Confirm, D);
         assert_eq!(
-            s.store.load_tasks().unwrap(),
+            s.store.load_day(D).unwrap().1,
             parse_tasks("- [ ] Report\n  - [ ] Outline\n")
         );
         assert_eq!(s.selected_task(), Some(1));
@@ -1120,7 +1206,7 @@ mod tests {
         s.apply(Command::Text("d".into()), D);
         s.apply(Command::Confirm, D);
         assert_eq!(
-            s.store.load_tasks().unwrap(),
+            s.store.load_day(D).unwrap().1,
             parse_tasks(
                 "- [ ] a
   - [ ] b
@@ -1161,7 +1247,7 @@ mod tests {
         assert_eq!(s.tasks.len(), 1);
         s.apply(Command::Undo, D);
         assert_eq!(s.tasks.len(), 3);
-        assert_eq!(s.store.load_tasks().unwrap().len(), 3);
+        assert_eq!(s.store.load_day(D).unwrap().1.len(), 3);
     }
 
     #[test]
@@ -1188,7 +1274,7 @@ mod tests {
         s.apply(Command::Text("x".into()), D);
         s.apply(Command::Cancel, D);
         assert!(s.tasks.is_empty());
-        assert!(!t.path().join("tasks.txt").exists());
+        assert!(!t.path().join(D_FILE).exists());
         s.apply(Command::Undo, D);
         assert_eq!(s.status, "nothing to undo");
     }
@@ -1236,7 +1322,7 @@ mod tests {
         s.apply(Command::Text("c".into()), D);
         s.apply(Command::Confirm, D);
         assert_eq!(
-            s.store.load_tasks().unwrap(),
+            s.store.load_day(D).unwrap().1,
             parse_tasks(
                 "- [ ] a
 - [ ] b
@@ -1264,9 +1350,9 @@ mod tests {
     }
 
     #[test]
-    fn unreadable_tasks_never_overwritten() {
+    fn unreadable_day_blocks_task_saves_too() {
         let tmp = tempfile::tempdir().unwrap();
-        let file = tmp.path().join("tasks.txt");
+        let file = tmp.path().join(D_FILE);
         let bytes = [0xffu8, 0xfe];
         std::fs::write(&file, bytes).unwrap();
         let mut s = AppState::new(
@@ -1275,36 +1361,13 @@ mod tests {
             },
             D,
         );
-        assert!(
-            s.status.starts_with("tasks.txt load failed"),
-            "{}",
-            s.status
-        );
+        assert!(s.status.starts_with("load failed"), "{}", s.status);
         s.focus = Focus::Tasks;
         s.apply(Command::New, D);
         s.apply(Command::Text("x".into()), D);
         s.apply(Command::Confirm, D);
         assert!(s.status.starts_with("not saving"), "{}", s.status);
         assert_eq!(std::fs::read(&file).unwrap(), bytes);
-    }
-
-    #[test]
-    fn both_load_errors_reported() {
-        let tmp = tempfile::tempdir().unwrap();
-        std::fs::write(
-            tmp.path().join(format!("{}.txt", D.format("%Y-%m-%d"))),
-            [0xffu8, 0xfe],
-        )
-        .unwrap();
-        std::fs::write(tmp.path().join("tasks.txt"), [0xffu8, 0xfe]).unwrap();
-        let s = AppState::new(
-            Store {
-                dir: tmp.path().to_path_buf(),
-            },
-            D,
-        );
-        assert!(s.status.starts_with("load failed"), "{}", s.status);
-        assert!(s.status.contains("tasks.txt load failed"), "{}", s.status);
     }
 
     #[test]
@@ -1325,7 +1388,7 @@ mod tests {
             (s.day.blocks()[0].start, s.day.blocks()[0].end),
             (Slot(44), Slot(48))
         );
-        assert_eq!(s.store.load_day(D).unwrap(), s.day);
+        assert_eq!(s.store.load_day(D).unwrap().0, s.day);
         s.apply(Command::Undo, D);
         assert_eq!(s.day.blocks()[0].start, Slot(36));
     }
@@ -1489,5 +1552,230 @@ mod tests {
         assert_eq!(s.status, "slot occupied");
         assert_eq!(s.focus, Focus::Timeline);
         assert_eq!(s.mode, Mode::Normal);
+    }
+
+    #[test]
+    fn tasks_belong_to_their_day_and_share_its_file() {
+        let (t, mut s) = st_with_block(40, 44);
+        s.focus = Focus::Tasks;
+        s.apply(Command::New, D);
+        s.apply(Command::Text("today".into()), D);
+        s.apply(Command::Confirm, D);
+        // One file holds both.
+        let text = std::fs::read_to_string(t.path().join(D_FILE)).unwrap();
+        assert_eq!(text, "10:00-11:00 standard a\n\n[tasks]\n- [ ] today\n");
+        s.apply(Command::NextDay, D);
+        assert!(s.tasks.is_empty());
+        s.apply(Command::New, D);
+        s.apply(Command::Text("tomorrow".into()), D);
+        s.apply(Command::Confirm, D);
+        s.apply(Command::PrevDay, D);
+        assert_eq!(s.tasks.len(), 1);
+        assert_eq!(s.tasks.items()[0].title, "today");
+        assert_eq!(s.day.blocks().len(), 1);
+        let next = D.succ_opt().unwrap();
+        assert_eq!(
+            s.store.load_day(next).unwrap().1.items()[0].title,
+            "tomorrow"
+        );
+    }
+
+    #[test]
+    fn block_edits_keep_the_days_tasks() {
+        let (_t, mut s) = st_tasks("- [ ] a\n");
+        s.focus = Focus::Timeline;
+        s.day
+            .add(Block {
+                start: Slot(40),
+                end: Slot(44),
+                kind: Kind::Standard,
+                title: "b".into(),
+            })
+            .unwrap();
+        s.save();
+        let (day, tasks) = s.store.load_day(D).unwrap();
+        assert_eq!(day.blocks().len(), 1);
+        assert_eq!(tasks.len(), 1);
+    }
+
+    #[test]
+    fn day_change_resets_task_selection() {
+        let (_t, mut s) = st_tasks("- [ ] a\n- [ ] b\n");
+        s.task_sel = 1;
+        s.apply(Command::NextDay, D);
+        assert_eq!(s.task_sel, 0);
+    }
+
+    #[test]
+    fn undo_returns_to_the_day_of_a_task_edit() {
+        let (_t, mut s) = st_tasks("- [ ] a\n");
+        s.apply(Command::ToggleDone, D);
+        s.apply(Command::NextDay, D);
+        s.apply(Command::Undo, D);
+        assert_eq!(s.date, D);
+        assert!(!s.tasks.items()[0].done);
+        assert!(!s.store.load_day(D).unwrap().1.items()[0].done);
+        s.apply(Command::Redo, D);
+        assert!(s.tasks.items()[0].done);
+    }
+
+    fn tasks_text(s: &AppState) -> String {
+        crate::storage::serialize_tasks(&s.tasks)
+    }
+
+    fn saved_tasks(s: &AppState, date: NaiveDate) -> String {
+        crate::storage::serialize_tasks(&s.store.load_day(date).unwrap().1)
+    }
+
+    #[test]
+    fn move_task_to_next_day_takes_subtasks_and_undoes_in_one_step() {
+        let (t, mut s) = st_tasks("- [ ] a\n- [ ] b\n  - [ ] b1\n- [ ] c\n");
+        let next = D.succ_opt().unwrap();
+        std::fs::write(t.path().join("2026-11-11.txt"), "[tasks]\n- [ ] x\n").unwrap();
+        s.task_sel = 1;
+        s.apply(Command::MoveTaskToNextDay, D);
+        assert_eq!(s.date, D);
+        assert_eq!(tasks_text(&s), "- [ ] a\n- [ ] c\n");
+        assert_eq!(s.selected_task(), Some(1));
+        assert_eq!(s.status, "moved to 2026-11-11");
+        assert_eq!(saved_tasks(&s, next), "- [ ] x\n- [ ] b\n  - [ ] b1\n");
+        assert_eq!(saved_tasks(&s, D), "- [ ] a\n- [ ] c\n");
+
+        s.apply(Command::Undo, D);
+        assert_eq!(tasks_text(&s), "- [ ] a\n- [ ] b\n  - [ ] b1\n- [ ] c\n");
+        assert_eq!(saved_tasks(&s, next), "- [ ] x\n");
+
+        s.apply(Command::Redo, D);
+        assert_eq!(tasks_text(&s), "- [ ] a\n- [ ] c\n");
+        assert_eq!(saved_tasks(&s, next), "- [ ] x\n- [ ] b\n  - [ ] b1\n");
+    }
+
+    #[test]
+    fn move_task_keeps_the_other_days_blocks() {
+        let (t, mut s) = st_tasks("- [ ] a\n");
+        std::fs::write(
+            t.path().join("2026-11-11.txt"),
+            "09:00-09:15 deep x\n\n[tasks]\n- [ ] y\n",
+        )
+        .unwrap();
+        s.apply(Command::MoveTaskToNextDay, D);
+        let (day, tasks) = s.store.load_day(D.succ_opt().unwrap()).unwrap();
+        assert_eq!(day.blocks().len(), 1);
+        assert_eq!(
+            crate::storage::serialize_tasks(&tasks),
+            "- [ ] y\n- [ ] a\n"
+        );
+    }
+
+    #[test]
+    fn move_task_to_prev_day_rebases_depth_and_deletes_empty_source() {
+        let (t, mut s) = st_tasks("- [ ] p\n  - [ ] c\n");
+        let prev = D.pred_opt().unwrap();
+        s.task_sel = 1;
+        s.apply(Command::MoveTaskToPrevDay, D);
+        assert_eq!(tasks_text(&s), "- [ ] p\n");
+        assert_eq!(saved_tasks(&s, prev), "- [ ] c\n");
+        // Moving the last task empties today's list (no blocks), so its file goes away.
+        s.task_sel = 0;
+        s.apply(Command::MoveTaskToPrevDay, D);
+        assert!(s.tasks.is_empty());
+        assert!(!t.path().join(D_FILE).exists());
+    }
+
+    #[test]
+    fn move_task_needs_a_selected_task() {
+        let (t, mut s) = st_tasks("- [ ] a\n");
+        s.task_sel = 1; // the "+ new task" row
+        s.apply(Command::MoveTaskToNextDay, D);
+        assert_eq!(tasks_text(&s), "- [ ] a\n");
+        assert!(!t.path().join("2026-11-11.txt").exists());
+        assert!(s.status.is_empty(), "{}", s.status);
+    }
+
+    #[test]
+    fn move_task_refuses_when_other_day_is_unreadable() {
+        let (t, mut s) = st_tasks("- [ ] a\n");
+        let file = t.path().join("2026-11-11.txt");
+        std::fs::write(&file, [0xffu8, 0xfe]).unwrap();
+        s.apply(Command::MoveTaskToNextDay, D);
+        assert!(s.status.starts_with("load failed"), "{}", s.status);
+        assert_eq!(tasks_text(&s), "- [ ] a\n");
+        assert_eq!(std::fs::read(&file).unwrap(), [0xffu8, 0xfe]);
+    }
+
+    #[test]
+    fn redoing_a_move_with_a_failing_target_write_does_not_lose_the_task() {
+        let (t, mut s) = st_tasks(
+            "- [ ] a
+- [ ] b
+",
+        );
+        let next = D.succ_opt().unwrap();
+        s.task_sel = 1;
+        s.apply(Command::MoveTaskToNextDay, D);
+        s.apply(Command::Undo, D);
+        assert_eq!(s.future.len(), 1);
+        // A directory where the temporary file goes makes every write to that day fail.
+        std::fs::create_dir(t.path().join("2026-11-11.txt.tmp")).unwrap();
+        s.apply(Command::Redo, D);
+        assert!(s.status.starts_with("save failed"), "{}", s.status);
+        assert_eq!(
+            tasks_text(&s),
+            "- [ ] a
+- [ ] b
+"
+        );
+        assert_eq!(
+            saved_tasks(&s, D),
+            "- [ ] a
+- [ ] b
+"
+        );
+        assert_eq!(saved_tasks(&s, next), "");
+        assert_eq!(s.future.len(), 1);
+        // Once the write works again, the same redo goes through.
+        std::fs::remove_dir(t.path().join("2026-11-11.txt.tmp")).unwrap();
+        s.apply(Command::Redo, D);
+        assert_eq!(
+            saved_tasks(&s, D),
+            "- [ ] a
+"
+        );
+        assert_eq!(
+            saved_tasks(&s, next),
+            "- [ ] b
+"
+        );
+    }
+
+    #[test]
+    fn undo_of_a_task_edit_refuses_when_the_current_day_is_unreadable() {
+        let (t, mut s) = st_tasks(
+            "- [ ] a
+",
+        );
+        s.history
+            .push(Snapshot::Tasks(vec![(D, TaskList::default())]));
+        let file = t.path().join(D_FILE);
+        std::fs::write(&file, [0xffu8, 0xfe]).unwrap();
+        s.load_current();
+        assert!(s.load_failed);
+        s.apply(Command::Undo, D);
+        assert!(s.status.starts_with("not saving"), "{}", s.status);
+        assert_eq!(std::fs::read(&file).unwrap(), [0xffu8, 0xfe]);
+        assert_eq!(s.history.len(), 1);
+        assert!(s.future.is_empty());
+    }
+
+    #[test]
+    fn move_task_is_ignored_while_typing_and_in_timeline() {
+        let (_t, mut s) = st_tasks("- [ ] a\n");
+        s.apply(Command::EditTitle, D);
+        s.apply(Command::MoveTaskToNextDay, D);
+        assert_eq!(s.tasks.len(), 1);
+        s.apply(Command::Cancel, D);
+        s.focus = Focus::Timeline;
+        s.apply(Command::MoveTaskToNextDay, D);
+        assert_eq!(s.tasks.len(), 1);
     }
 }

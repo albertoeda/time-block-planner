@@ -93,6 +93,7 @@ pub fn hints(state: &AppState) -> &'static [(&'static str, &'static str)] {
                 ("Tab/Shift+Tab", "indent"),
                 ("Alt+↑↓", "swap"),
                 ("p", "plan"),
+                ("[ ]", "move day"),
                 ("→", "time"),
             ],
             Focus::Timeline => &[
@@ -127,11 +128,12 @@ pub fn status_bar(ui: &mut egui::Ui, state: &AppState, theme: &Theme) {
                         RichText::new(format!("{} │ F1 help", theme.name)).color(color(theme.dim)),
                     );
                     if !state.status.is_empty() {
-                        let status_color = if state.status == "saved" {
-                            theme.fg
-                        } else {
-                            theme.error
-                        };
+                        let status_color =
+                            if state.status == "saved" || state.status.starts_with("moved to ") {
+                                theme.fg
+                            } else {
+                                theme.error
+                            };
                         ui.label(
                             RichText::new(format!("{} │", state.status)).color(color(status_color)),
                         );
@@ -178,6 +180,7 @@ const HELP: &[(&str, &str)] = &[
     ("Space, x", "tick / untick task"),
     ("Tab, Shift+Tab", "indent / outdent task"),
     ("p", "plan task on the timeline"),
+    ("[ ], Alt+Shift+← →", "move task to previous / next day"),
     ("^Z", "undo"),
     ("^Shift+Z, ^Y", "redo"),
     ("^S", "save (autosaves anyway)"),
@@ -254,6 +257,7 @@ mod tests {
         s.focus = Focus::Tasks;
         assert_eq!(pane_name(s.focus), "tasks");
         assert!(keys(&s).contains(&"Space"));
+        assert!(keys(&s).contains(&"[ ]"));
         assert!(!keys(&s).contains(&"^Z") && !keys(&s).contains(&"d"));
         s.mode = Mode::Help;
         assert_eq!(keys(&s), ["Esc"]);
@@ -262,5 +266,6 @@ mod tests {
             HELP.iter()
                 .all(|(k, _)| !k.contains("Ctrl") && !k.contains("^+"))
         );
+        assert!(HELP.iter().any(|(k, _)| k.contains("Alt+Shift+←")));
     }
 }

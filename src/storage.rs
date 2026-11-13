@@ -1,4 +1,5 @@
-//! Plaintext persistence: one `YYYY-MM-DD.txt` per day plus `config.txt`, in a user folder.
+//! Plaintext persistence: one `YYYY-MM-DD.txt` per day (time blocks, then an optional `[tasks]`
+//! checklist) plus `config.txt`, in a user folder.
 
 use std::fs;
 use std::io;
@@ -11,6 +12,7 @@ use crate::tasks::{Task, TaskList};
 
 const UNPARSED_HEADER: &str = "# unparsed lines kept by time-block-planner";
 const APP_DIR: &str = ".time-block-planner";
+const TASKS_HEADER: &str = "[tasks]";
 
 /// Parses a day file. Lines that are not valid, non-overlapping blocks are kept in `unparsed`.
 pub fn parse_day(text: &str) -> Day {
@@ -75,7 +77,7 @@ pub fn serialize_day(day: &Day) -> String {
     out
 }
 
-/// Parses tasks.txt leniently: indent gives depth, `- [ ]`/`- [x]` markers give state.
+/// Parses a task list leniently: indent gives depth, `- [ ]`/`- [x]` markers give state.
 pub fn parse_tasks(text: &str) -> TaskList {
     let text = text.strip_prefix('\u{feff}').unwrap_or(text);
     let mut items = Vec::new();
@@ -126,6 +128,39 @@ pub fn serialize_tasks(list: &TaskList) -> String {
     out
 }
 
+/// Parses a whole day file: block lines first, then everything after a `[tasks]` line is the
+/// day's task checklist.
+pub fn parse_file(text: &str) -> (Day, TaskList) {
+    let text = text.strip_prefix('\u{feff}').unwrap_or(text);
+    let (mut blocks, mut tasks) = (String::new(), String::new());
+    let mut in_tasks = false;
+    for line in text.lines() {
+        if line.trim() == TASKS_HEADER {
+            in_tasks = true;
+            continue;
+        }
+        let part = if in_tasks { &mut tasks } else { &mut blocks };
+        part.push_str(line);
+        part.push('\n');
+    }
+    (parse_day(&blocks), parse_tasks(&tasks))
+}
+
+/// Renders a day file: the blocks, then (only when there are tasks) a blank line, `[tasks]`
+/// and the checklist.
+pub fn serialize_file(day: &Day, tasks: &TaskList) -> String {
+    let mut out = serialize_day(day);
+    if !tasks.is_empty() {
+        if !out.is_empty() {
+            out.push('\n');
+        }
+        out.push_str(TASKS_HEADER);
+        out.push('\n');
+        out.push_str(&serialize_tasks(tasks));
+    }
+    out
+}
+
 /// Data folder: CLI arg > `TBP_DIR` > `<home>/.time-block-planner`.
 pub fn resolve_dir(cli: Option<PathBuf>) -> PathBuf {
     if let Some(p) = cli {
@@ -153,46 +188,26 @@ impl Store {
         self.dir.join("config.txt")
     }
 
-    pub fn load_day(&self, date: NaiveDate) -> io::Result<Day> {
+    pub fn load_day(&self, date: NaiveDate) -> io::Result<(Day, TaskList)> {
         match fs::read_to_string(self.day_path(date)) {
-            Ok(text) => Ok(parse_day(&text)),
-            Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(Day::default()),
+            Ok(text) => Ok(parse_file(&text)),
+            Err(e) if e.kind() == io::ErrorKind::NotFound => {
+                Ok((Day::default(), TaskList::default()))
+            }
             Err(e) => Err(e),
         }
     }
 
-    pub fn save_day(&self, date: NaiveDate, day: &Day) -> io::Result<()> {
+    /// Writes the day's blocks and tasks to one file; deletes the file when both are empty.
+    pub fn save_day(&self, date: NaiveDate, day: &Day, tasks: &TaskList) -> io::Result<()> {
         let path = self.day_path(date);
-        if day.is_empty() {
+        if day.is_empty() && tasks.is_empty() {
             return match fs::remove_file(&path) {
                 Err(e) if e.kind() != io::ErrorKind::NotFound => Err(e),
                 _ => Ok(()),
             };
         }
-        write_atomic(&self.dir, &path, &serialize_day(day))
-    }
-
-    fn tasks_path(&self) -> PathBuf {
-        self.dir.join("tasks.txt")
-    }
-
-    pub fn load_tasks(&self) -> io::Result<TaskList> {
-        match fs::read_to_string(self.tasks_path()) {
-            Ok(text) => Ok(parse_tasks(&text)),
-            Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(TaskList::default()),
-            Err(e) => Err(e),
-        }
-    }
-
-    pub fn save_tasks(&self, list: &TaskList) -> io::Result<()> {
-        let path = self.tasks_path();
-        if list.is_empty() {
-            return match fs::remove_file(&path) {
-                Err(e) if e.kind() != io::ErrorKind::NotFound => Err(e),
-                _ => Ok(()),
-            };
-        }
-        write_atomic(&self.dir, &path, &serialize_tasks(list))
+        write_atomic(&self.dir, &path, &serialize_file(day, tasks))
     }
 
     pub fn load_theme(&self) -> Option<String> {
@@ -289,9 +304,9 @@ mod tests {
             dir: tmp.path().join("nested/plans"),
         };
         let d = parse_day("09:00-09:15 deep x\n");
-        store.save_day(date(), &d).unwrap();
+        store.save_day(date(), &d, &TaskList::default()).unwrap();
         assert!(store.dir.join("2026-11-10.txt").exists());
-        assert_eq!(store.load_day(date()).unwrap(), d);
+        assert_eq!(store.load_day(date()).unwrap(), (d, TaskList::default()));
     }
 
     #[test]
@@ -301,9 +316,15 @@ mod tests {
             dir: tmp.path().to_path_buf(),
         };
         store
-            .save_day(date(), &parse_day("09:00-09:15 deep x\n"))
+            .save_day(
+                date(),
+                &parse_day("09:00-09:15 deep x\n"),
+                &TaskList::default(),
+            )
             .unwrap();
-        store.save_day(date(), &Day::default()).unwrap();
+        store
+            .save_day(date(), &Day::default(), &TaskList::default())
+            .unwrap();
         assert!(!store.dir.join("2026-11-10.txt").exists());
     }
 
@@ -313,7 +334,10 @@ mod tests {
         let store = Store {
             dir: tmp.path().to_path_buf(),
         };
-        assert_eq!(store.load_day(date()).unwrap(), Day::default());
+        assert_eq!(
+            store.load_day(date()).unwrap(),
+            (Day::default(), TaskList::default())
+        );
     }
 
     #[test]
@@ -376,16 +400,59 @@ mod tests {
     }
 
     #[test]
-    fn tasks_file_roundtrip_and_empty_deletes() {
+    fn file_with_blocks_and_tasks_roundtrips() {
+        let txt = "09:00-10:30 deep Write\n\n[tasks]\n- [ ] a\n  - [x] b\n";
+        let (d, t) = parse_file(txt);
+        assert_eq!(d.blocks().len(), 1);
+        assert_eq!(t.len(), 2);
+        assert!(t.items()[1].done);
+        assert_eq!(serialize_file(&d, &t), txt);
+    }
+
+    #[test]
+    fn file_without_tasks_has_no_header() {
+        let txt = "09:00-09:15 standard x\n";
+        let (d, t) = parse_file(txt);
+        assert!(t.is_empty());
+        assert_eq!(serialize_file(&d, &t), txt);
+    }
+
+    #[test]
+    fn tasks_only_file_roundtrips() {
+        let txt = "[tasks]\n- [ ] a\n";
+        let (d, t) = parse_file(txt);
+        assert!(d.is_empty());
+        assert_eq!(t.len(), 1);
+        assert_eq!(serialize_file(&d, &t), txt);
+    }
+
+    #[test]
+    fn hand_edits_around_the_tasks_header_are_tolerated() {
+        let (d, t) = parse_file("\u{feff}garbage\n09:00-09:15 deep x\n  [tasks]  \nplain\n");
+        assert_eq!(d.unparsed, vec!["garbage"]);
+        assert_eq!(d.blocks().len(), 1);
+        assert_eq!(t.items()[0].title, "plain");
+    }
+
+    #[test]
+    fn day_file_lives_while_it_has_blocks_or_tasks() {
         let tmp = tempfile::tempdir().unwrap();
         let store = Store {
-            dir: tmp.path().join("d"),
+            dir: tmp.path().to_path_buf(),
         };
-        assert!(store.load_tasks().unwrap().is_empty());
-        let l = parse_tasks("- [ ] a\n");
-        store.save_tasks(&l).unwrap();
-        assert_eq!(store.load_tasks().unwrap(), l);
-        store.save_tasks(&TaskList::default()).unwrap();
-        assert!(!store.dir.join("tasks.txt").exists());
+        let path = store.dir.join("2026-11-10.txt");
+        let tasks = parse_tasks("- [ ] a\n");
+        store
+            .save_day(date(), &parse_day("09:00-09:15 deep x\n"), &tasks)
+            .unwrap();
+        // Blocks gone, tasks remain: the file stays.
+        store.save_day(date(), &Day::default(), &tasks).unwrap();
+        assert!(path.exists());
+        assert_eq!(store.load_day(date()).unwrap(), (Day::default(), tasks));
+        // Nothing left: the file goes.
+        store
+            .save_day(date(), &Day::default(), &TaskList::default())
+            .unwrap();
+        assert!(!path.exists());
     }
 }
