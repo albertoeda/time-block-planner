@@ -37,6 +37,8 @@ pub fn key_to_command(key: Key, m: Modifiers, mode: &Mode) -> Option<Command> {
             Key::ArrowRight if m.alt && !m.command && !m.shift => C::Indent,
             Key::ArrowLeft if m.shift && !m.command && !m.alt => C::PrevDay,
             Key::ArrowRight if m.shift && !m.command && !m.alt => C::NextDay,
+            Key::ArrowLeft if m.alt && m.shift && !m.command => C::MoveTaskToPrevDay,
+            Key::ArrowRight if m.alt && m.shift && !m.command => C::MoveTaskToNextDay,
             Key::ArrowLeft if plain => C::FocusPane(Focus::Tasks),
             Key::ArrowRight if plain => C::FocusPane(Focus::Timeline),
             Key::PageUp if plain => C::PageUp,
@@ -98,6 +100,8 @@ pub fn text_to_command(text: &str, mode: &Mode) -> Option<Command> {
             "t" => Some(Command::Today),
             "x" | " " => Some(Command::ToggleDone),
             "p" => Some(Command::ScheduleTask),
+            "[" => Some(Command::MoveTaskToPrevDay),
+            "]" => Some(Command::MoveTaskToNextDay),
             ">" => Some(Command::Indent),
             "<" => Some(Command::Outdent),
             "1" => Some(Command::SetKind(Kind::Standard)),
@@ -365,6 +369,8 @@ mod tests {
             ("<", Command::Outdent),
             ("d", Command::Delete),
             ("t", Command::Today),
+            ("[", Command::MoveTaskToPrevDay),
+            ("]", Command::MoveTaskToNextDay),
         ] {
             assert_eq!(text_to_command(ch, n), Some(cmd), "{ch}");
             assert_eq!(
@@ -412,5 +418,29 @@ mod tests {
             Some(Command::Cancel)
         );
         assert_eq!(key_to_command(Key::ArrowDown, M::NONE, mv), None);
+    }
+
+    #[test]
+    fn alt_shift_arrows_move_a_task_between_days() {
+        let n = &Mode::Normal;
+        assert_eq!(
+            key_to_command(Key::ArrowLeft, M::ALT | M::SHIFT, n),
+            Some(Command::MoveTaskToPrevDay)
+        );
+        assert_eq!(
+            key_to_command(Key::ArrowRight, M::ALT | M::SHIFT, n),
+            Some(Command::MoveTaskToNextDay)
+        );
+        // Shift+arrows alone still change the day shown.
+        assert_eq!(
+            key_to_command(Key::ArrowRight, M::SHIFT, n),
+            Some(Command::NextDay)
+        );
+        let e = &Mode::EditTask {
+            idx: 0,
+            original: String::new(),
+            is_new: false,
+        };
+        assert_eq!(key_to_command(Key::ArrowLeft, M::ALT | M::SHIFT, e), None);
     }
 }

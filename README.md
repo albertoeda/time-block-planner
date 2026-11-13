@@ -1,6 +1,6 @@
 # time-block-planner
 
-A one-day-at-a-time time block planner with a terminal look. It is a native GUI app written in Rust with egui, and it runs on Windows, macOS and Linux. Blocks are **standard** (the default), **scheduled** (for calendar meetings) or **deep** (deep work); every block is drawn in the theme's accent color (dim once it is over, full while it is under way, medium before it starts) and a corner shape (circle, square, triangle) shows its type. You can create them by dragging with the mouse or entirely from the keyboard. A nested task list sits beside the timeline; drag a task onto the day, or press `p`, to plan it as a block.
+A one-day-at-a-time time block planner with a terminal look. It is a native GUI app written in Rust with egui, and it runs on Windows, macOS and Linux. Blocks are **standard** (the default), **scheduled** (for calendar meetings) or **deep** (deep work); every block is drawn in the theme's accent color (dim once it is over, full while it is under way, medium before it starts) and a corner shape (circle, square, triangle) shows its type. You can create them by dragging with the mouse or entirely from the keyboard. A nested task list for the same day sits beside the timeline; drag a task onto the day, or press `p`, to plan it as a block.
 
 ## Build
 
@@ -19,31 +19,28 @@ Plans are saved automatically after every change, to `.time-block-planner/` in y
 - `TBP_DIR=/path/to/folder`
 - `time-block-planner --dir /path/to/folder` (takes priority)
 
-Each day is one plaintext file, `YYYY-MM-DD.txt`:
+Each day is one plaintext file, `YYYY-MM-DD.txt`, holding that day's time blocks and, after a `[tasks]` line, that day's task list:
 
 ```
 09:00-10:30 deep Write quarterly report
 11:00-11:30 scheduled Standup
 13:00-13:15 standard
+
+[tasks]
+- [ ] Call the bank
+  - [x] Find the number
 ```
 
-`HH:MM-HH:MM <kind> <title>`, on a 15-minute grid. `24:00` is allowed as an end time. Lines starting with `#` are comments; they are kept, moved to the top of the file when the app saves that day. You can edit the files by hand. Lines the app can't read (for example, off-grid times or overlaps) are kept at the end of the file under `# unparsed lines kept by time-block-planner`; they are never deleted. If you remove every block from a day, that day's file is deleted.
+`HH:MM-HH:MM <kind> <title>`, on a 15-minute grid. `24:00` is allowed as an end time. Lines starting with `#` are comments; they are kept, moved to the top of the file when the app saves that day. You can edit the files by hand. Lines the app can't read (for example, off-grid times or overlaps) are kept at the end of the file under `# unparsed lines kept by time-block-planner`; they are never deleted. If a day has no blocks and no tasks, its file is deleted.
 
 `config.txt` in the same folder stores the chosen theme (`theme=rose-pine`).
 
-The task list is saved to `tasks.txt` in the same folder, as a nested Markdown checklist:
-
-```
-- [ ] Write quarterly report
-  - [x] Outline
-  - [ ] Draft
-- [ ] Call the bank
-```
+The tasks after `[tasks]` are a nested Markdown checklist, one list per day:
 
 - Each level of nesting is two spaces of indentation; a tab counts as two spaces.
 - `- [ ] ` marks an open task and `- [x] ` (or `- [X] `) a done one. Any other non-blank line becomes an open task, with the line as its title.
 - The first task is top-level, and each task can be at most one level deeper than the task above it (deeper lines are pulled up). Indentation stops at 8 levels (16 spaces).
-- Blank lines and a leading byte-order mark are dropped. The app writes the file back in this normalized form, and deletes it when the list is empty.
+- Blank lines and a leading byte-order mark are dropped. The app writes the tasks back in this normalized form, and leaves out the `[tasks]` line when the day has no tasks.
 
 ## Keys
 
@@ -52,7 +49,7 @@ The task list is saved to `tasks.txt` in the same folder, as a nested Markdown c
 | Key | Timeline | Tasks |
 |---|---|---|
 | `←` `→` | go to the tasks pane / timeline | go to the tasks pane / timeline |
-| `Shift+←` `Shift+→` | previous / next day | previous / next day |
+| `Shift+←` `Shift+→` | previous / next day (blocks and tasks) | previous / next day (blocks and tasks) |
 | `t`, `Ctrl+T` | today | today |
 | `↑` `↓` | move the cursor 15 min | select the previous / next task; below the last task is `+ new task` |
 | `PageUp` `PageDown` | move 1 hour | move 10 tasks |
@@ -69,6 +66,7 @@ The task list is saved to `tasks.txt` in the same folder, as a nested Markdown c
 | `Space`, `x` | | tick / untick the task |
 | `Tab` / `Shift+Tab` (also `Alt+→`, `>` / `Alt+←`, `<`) | | indent / outdent the task |
 | `p` | | plan the task: switch to the timeline and start a block at the cursor, titled with the task |
+| `[` `]`, `Alt+Shift+←` `Alt+Shift+→` | | move the task and its subtasks to the end of the previous / next day's list (you stay on this day; one undo restores both days) |
 | `Ctrl+Z` / `Ctrl+Shift+Z`, `Ctrl+Y` | undo / redo (block and task edits share one history) | same |
 | `Ctrl+S` | save (the app also saves automatically) | same |
 | `Ctrl+,` | choose a theme (`↑`/`↓` previews, `Enter` keeps it, `Esc` reverts) | same |
